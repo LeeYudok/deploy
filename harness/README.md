@@ -8,6 +8,7 @@ harness/
 ├── .env.toml.example   공통 접속 설정 (복사해서 .env.toml 로 사용, git 에 안 올림)
 ├── scenarios/          멀티턴 시나리오 (JSON, 언어별)
 ├── go/                 Go 클라이언트·웹 UI + Windows 실행파일(bin/llmtest.exe) → go/README.md
+├── e2e/                웹 UI Playwright E2E (모의 LLM, 폐쇄망 설치 안내)       → e2e/README.md
 └── python/             Python 클라이언트 (3.8 이상)                       → python/README.md
 ```
 
@@ -150,7 +151,7 @@ thinking 을 켜고 끄는 요청 필드가 서버마다 다르다. `-server aut
 | `scenario` | 시나리오 이름, 모델, thinking 강제값(`scenario` 면 시나리오 값), 턴·완료·검사·실패 수, 중지 여부, 소요, 턴별 검사 결과 |
 
 - 중지한 턴은 남기지 않는다. 호출 오류는 남긴다.
-- CLI 는 `-no-record` 로 끈다. (Python 클라이언트는 아직 기록하지 않는다.)
+- CLI 는 `-no-record` 로 끄고, `-runs <폴더>` 로 기록 폴더를 바꾼다 (웹 UI 도 같음). (Python 클라이언트는 아직 기록하지 않는다.)
 - SQLite 대신 JSONL 을 쓴다: 표준 라이브러리만으로 되어 폐쇄망 빌드가 그대로다. 기록을 읽는 데 300ms, 쓰는 데 50ms 를 넘기면 로그 탭과 터미널에 `WARN runs 기록 읽기 느림 …` 이 찍힌다. 이 경고가 잦아지면 SQLite 로 옮길 때다.
 - `jq` 로도 바로 볼 수 있다: `jq -r 'select(.type=="turn") | [.time,.model,.think,.elapsed_ms] | @tsv' runs/*.jsonl`
 
@@ -162,3 +163,5 @@ scripts/dev-web.sh            # 레포 루트에서. 기본 127.0.0.1:8787
 
 `harness/go` 의 `.go`·`web/`·`go.mod` 가 바뀌면 1초 안에 다시 빌드하고 웹 UI 를 재시작한다. 빌드가 실패하면 기존 서버를 그대로 두고 오류만 출력한다.
 열려 있는 화면은 재시작을 알아채고 위쪽에 "새 버전이 배포됐습니다" 배너를 띄운다. 대화 중일 수 있어 자동으로 새로고침하지는 않는다.
+
+웹 UI 를 고친 뒤에는 E2E 를 돌린다: `cd e2e && npx playwright test` (자세한 건 [e2e/README.md](e2e/README.md)).

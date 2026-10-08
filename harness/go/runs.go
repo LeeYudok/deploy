@@ -91,8 +91,14 @@ func newRunStore(dir string, slow func(string)) *runStore {
 	return &runStore{dir: dir, slow: slow}
 }
 
-// runsDir 는 기록 폴더를 정한다. scenarios 폴더 옆(harness/runs), 없으면 현재 폴더의 runs.
+// runsFlag 는 -runs 로 지정한 기록 폴더다 (E2E 가 임시 폴더를 쓰려고 지정한다).
+var runsFlag string
+
+// runsDir 는 기록 폴더를 정한다. -runs, scenarios 폴더 옆(harness/runs), 현재 폴더의 runs 순.
 func runsDir() string {
+	if runsFlag != "" {
+		return runsFlag
+	}
 	if dir := findUp("scenarios", true); dir != "" {
 		return filepath.Join(filepath.Dir(dir), "runs")
 	}

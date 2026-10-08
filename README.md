@@ -15,7 +15,8 @@ harness/
 ├── .env.toml.example   접속 설정 (복사해서 .env.toml)
 ├── scenarios/          멀티턴 시나리오 (JSON)
 ├── go/                 Go 클라이언트·웹 UI, bin/llmtest.exe (Windows 64비트, Go 설치 불필요)
-└── python/             Python 클라이언트 (표준 라이브러리만)
+├── python/             Python 클라이언트 (표준 라이브러리만)
+└── e2e/                웹 UI Playwright E2E (모의 LLM)
 ```
 
 시작은 [harness/README.md](harness/README.md), Windows 실행·빌드는 [harness/go/README.md](harness/go/README.md).

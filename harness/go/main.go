@@ -107,6 +107,7 @@ func main() {
 	addr := flag.String("addr", defaultAddr, "웹 UI 주소 (-web 일 때)")
 	noOpen := flag.Bool("no-open", false, "웹 UI 실행 시 브라우저를 열지 않음")
 	noRecord := flag.Bool("no-record", false, "실행 기록(runs/*.jsonl)을 남기지 않음")
+	flag.StringVar(&runsFlag, "runs", "", "실행 기록 폴더 (기본: scenarios 폴더 옆의 runs)")
 	flag.Parse()
 
 	if presetID != "" {
