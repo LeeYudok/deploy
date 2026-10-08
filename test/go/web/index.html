@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LLM 테스트</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top">
+  <h1>LLM 테스트</h1>
+  <span class="muted small" id="cfgPath"></span>
+</header>
+
+<div class="layout">
+  <aside class="panel settings">
+    <form id="settings" autocomplete="off">
+      <h2>접속</h2>
+      <label>접속주소 (base_url)
+        <input name="base_url" placeholder="http://HOST:PORT/v1" required>
+      </label>
+      <label>API 키
+        <input name="api_key" type="password" placeholder="필요한 경우만">
+      </label>
+      <div class="row small" id="keyRow" hidden>
+        <span class="muted">저장된 키 사용 중</span>
+        <label class="inline"><input type="checkbox" name="clear_api_key"> 저장된 키 지우기</label>
+      </div>
+      <label>모델
+        <span class="row">
+          <input name="model" list="modelList" required>
+          <button type="button" id="loadModels" class="ghost">목록</button>
+        </span>
+      </label>
+      <datalist id="modelList"></datalist>
+
+      <h2>생성</h2>
+      <div class="grid2">
+        <label>thinking
+          <select name="think">
+            <option value="auto">auto (서버 기본)</option>
+            <option value="on">on</option>
+            <option value="off">off</option>
+          </select>
+        </label>
+        <label>reasoning_effort
+          <select name="reasoning_effort">
+            <option value="">보내지 않음</option>
+            <option value="low">low</option>
+            <option value="medium">medium</option>
+            <option value="high">high</option>
+          </select>
+        </label>
+        <label>temperature
+          <input name="temperature" type="number" step="0.1" min="0" max="2">
+        </label>
+        <label>max_tokens
+          <input name="max_tokens" type="number" step="1" min="1">
+        </label>
+      </div>
+      <label class="inline"><input type="checkbox" name="stream" checked> 스트리밍</label>
+      <label>시스템 프롬프트
+        <textarea name="system" rows="3"></textarea>
+      </label>
+
+      <div class="row">
+        <button type="submit" class="primary">.env.toml 에 저장</button>
+        <span class="small" id="saveStatus"></span>
+      </div>
+      <p class="muted small">화면 값은 저장하지 않아도 바로 호출에 쓰입니다.</p>
+    </form>
+  </aside>
+
+  <main class="panel main">
+    <nav class="tabs" role="tablist">
+      <button type="button" role="tab" data-tab="chat" aria-selected="true">대화</button>
+      <button type="button" role="tab" data-tab="scenario" aria-selected="false">시나리오</button>
+    </nav>
+
+    <section id="tab-chat" class="tab">
+      <div id="chatLog" class="log" aria-live="polite">
+        <p class="muted empty">질문을 입력하면 대화가 이어집니다. 매 턴 앞선 대화 전체를 함께 보냅니다.</p>
+      </div>
+      <form id="composer" class="composer">
+        <textarea name="q" rows="2" placeholder="메시지 (Enter 보내기, Shift+Enter 줄바꿈)"></textarea>
+        <div class="col">
+          <button type="submit" class="primary" id="send">보내기</button>
+          <button type="button" id="stopChat" class="ghost" disabled>중지</button>
+          <button type="button" id="resetChat" class="ghost">새 대화</button>
+        </div>
+      </form>
+    </section>
+
+    <section id="tab-scenario" class="tab" hidden>
+      <div class="row wrap">
+        <label class="inline">thinking
+          <select id="scThink">
+            <option value="">시나리오 값 따름</option>
+            <option value="on">모두 on</option>
+            <option value="off">모두 off</option>
+            <option value="auto">모두 auto</option>
+          </select>
+        </label>
+        <button type="button" id="scAll" class="ghost">전체 선택</button>
+        <button type="button" id="scRun" class="primary">실행</button>
+        <button type="button" id="scStop" class="ghost" disabled>중지</button>
+        <span class="muted small" id="scSource"></span>
+      </div>
+      <div id="scList" class="sclist"></div>
+      <div id="scSummary"></div>
+      <div id="scLog" class="log"></div>
+    </section>
+  </main>
+</div>
+<script src="app.js"></script>
+</body>
+</html>

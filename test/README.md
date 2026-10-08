@@ -7,7 +7,7 @@ sglang 등 OpenAI 호환 API(`/v1/chat/completions`)를 언어별 클라이언�
 test/
 ├── .env.toml.example   공통 접속 설정 (복사해서 .env.toml 로 사용, git 에 안 올림)
 ├── scenarios/          멀티턴 시나리오 (JSON, 언어별)
-├── go/                 Go 클라이언트 + Windows 실행파일(bin/llmtest.exe)  → go/README.md
+├── go/                 Go 클라이언트·웹 UI + Windows 실행파일(bin/llmtest.exe) → go/README.md
 └── python/             Python 클라이언트 (3.8 이상)                       → python/README.md
 ```
 
@@ -30,9 +30,21 @@ notepad .env.toml
 | 대화형 멀티턴 | `llmtest.exe -chat` | `python llmtest.py -chat` |
 | 시나리오 멀티턴 | `llmtest.exe -scenario ..\..\scenarios` | `python llmtest.py -scenario ..\scenarios` |
 | 모델 목록 | `llmtest.exe -models` | `python llmtest.py -models` |
+| 웹 UI | `llmtest.exe -web` (또는 `llmtest-web.bat` 더블클릭) | - |
 
 공통 플래그: `-stream`, `-think on|off|auto`, `-effort low|medium|high`, `-hide-think`, `-sys`, `-t`, `-max`, `-timeout`.
 우선순위: **플래그 > 환경변수 > .env.toml**.
+
+### 웹 UI (`-web`, Go 만)
+
+`llmtest.exe -web` 을 실행하면 브라우저에 `http://127.0.0.1:8787/` 이 열린다. exe 하나에 화면(HTML/JS/CSS)이 들어 있어서 Node·인터넷이 필요 없다.
+
+- **설정**: 접속주소·API 키·모델·thinking·reasoning_effort·temperature·max_tokens·시스템 프롬프트를 바꾼다. 화면 값은 바로 호출에 쓰이고, `.env.toml 에 저장` 을 누르면 파일에 쓴다. `목록` 은 `/v1/models` 로 모델을 불러온다.
+- **대화**: 멀티턴 대화. 턴마다 thinking 을 바꿔 가며 보낼 수 있고, 추론 과정은 접힌 상자로, 소요·첫토큰·토큰 수는 답변 아래에 표시한다.
+- **시나리오**: `scenarios/` 를 골라 돌리고 PASS/FAIL 표를 보여 준다. thinking 을 `모두 on` / `모두 off` 로 강제해 비교할 수 있다.
+- 기본은 이 PC(127.0.0.1)에서만 열린다. 다른 PC 에서 보려면 `-addr 0.0.0.0:8787` 로 연다 (같은 망에서 누구나 이 화면으로 LLM 을 호출할 수 있게 되니 주의).
+- API 키는 화면으로 내보내지 않는다. 저장된 키가 있으면 "저장된 키 사용 중" 만 표시한다.
+- `-no-open` 은 브라우저를 열지 않는다. 저장 위치는 화면 위쪽에 나온다 (설정파일이 없으면 `test/.env.toml` 에 만든다).
 
 ### 대화형 멀티턴 (`-chat`)
 

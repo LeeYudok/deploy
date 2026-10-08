@@ -6,6 +6,7 @@
 //	go run . -stream -think off -p "Go 언어 장점 3가지"
 //	go run . -chat                          # 대화형 멀티턴
 //	go run . -scenario ../scenarios          # 시나리오 멀티턴 자동 검증
+//	go run . -web                            # 웹 UI (설정 변경·대화·시나리오)
 //	go run . -models
 //
 // 접속 정보는 .env.toml 에서 읽는다 (../.env.toml.example 참고).
@@ -24,7 +25,10 @@ import (
 	"time"
 )
 
-const defaultSystem = "You are a helpful assistant. 한국어로 답변하세요."
+const (
+	defaultSystem = "You are a helpful assistant. 한국어로 답변하세요."
+	defaultAddr   = "127.0.0.1:8787"
+)
 
 func main() {
 	cfgPath := findUp(".env.toml", false)
@@ -81,6 +85,9 @@ func main() {
 	hideThink := flag.Bool("hide-think", false, "추론 과정(reasoning) 출력 숨김")
 	chatMode := flag.Bool("chat", false, "대화형 멀티턴 모드")
 	scenario := flag.String("scenario", "", "멀티턴 시나리오 JSON 파일 또는 폴더 (쉼표로 여러 개)")
+	web := flag.Bool("web", false, "웹 UI 실행 (설정 변경·대화·시나리오)")
+	addr := flag.String("addr", defaultAddr, "웹 UI 주소 (-web 일 때)")
+	noOpen := flag.Bool("no-open", false, "웹 UI 실행 시 브라우저를 열지 않음")
 	flag.Parse()
 
 	if _, err := thinkKwargs(*think); err != nil {
@@ -96,6 +103,18 @@ func main() {
 		MaxTokens: *maxTokens,
 		Stream:    *stream,
 		Effort:    *effort,
+	}
+
+	// 웹 UI 는 접속주소가 비어 있어도 띄운다 (화면에서 입력).
+	if *web {
+		settings := Settings{
+			BaseURL: *baseURL, Model: *model, APIKey: *apiKey, Think: *think, Effort: *effort,
+			Temperature: *temp, MaxTokens: *maxTokens, System: *system,
+		}
+		if err := runWeb(*addr, !*noOpen, cfgPath, cfg, settings, *timeout, *scenario); err != nil {
+			fail("%v", err)
+		}
+		return
 	}
 
 	if *baseURL == "" {

@@ -19,7 +19,10 @@ llmtest.exe -p "안녕하세요"
 llmtest.exe -think off -p "안녕하세요"
 llmtest.exe -scenario ..\..\scenarios
 llmtest.exe -chat
+llmtest.exe -web
 ```
+
+`bin/llmtest-web.bat` 을 더블클릭하면 웹 UI 가 바로 열린다.
 
 > 소스를 바꿨으면 아래 4번 또는 Linux/Mac 에서 다시 빌드해 `bin/llmtest.exe` 를 갱신한다:
 > `CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o bin/llmtest.exe .`
@@ -101,6 +104,7 @@ go build -o llmtest.exe .
 
 빌드된 `llmtest.exe` 는 Go 가 없는 PC에서도 실행된다.
 `.env.toml` 은 **exe 폴더나 현재 폴더, 또는 그 상위 2단계 안**에 두면 된다.
+웹 UI 화면(`web/`)은 `go:embed` 로 exe 안에 들어가므로 exe 하나만 옮기면 된다.
 
 ```bat
 llmtest.exe -models
@@ -131,6 +135,9 @@ llmtest.exe -config D:\conf\llm.toml -p "다른 설정파일 사용"
 | `-hide-think` | | | 추론 과정 출력 숨김 |
 | `-chat` | | | 대화형 멀티턴 모드 |
 | `-scenario` | | | 시나리오 JSON 파일·폴더 (쉼표로 여러 개) |
+| `-web` | | | 웹 UI 실행 (설정 변경·대화·시나리오) |
+| `-addr` | | | 웹 UI 주소 (`127.0.0.1:8787`) |
+| `-no-open` | | | 웹 UI 실행 시 브라우저를 열지 않음 |
 | | `LLM_TEMPERATURE` | `temperature` | `-t` 기본값 |
 | | `LLM_MAX_TOKENS` | `max_tokens` | `-max` 기본값 |
 | | `LLM_SYSTEM` | `system` | `-sys` 기본값 |
