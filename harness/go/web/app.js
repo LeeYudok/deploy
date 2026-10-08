@@ -206,14 +206,89 @@ $("#loadModels").addEventListener("click", () => refreshModels(false));
 
 // ---- 답변 표시 ----
 
+// copyText 는 클립보드에 넣는다. http 로 다른 PC 에서 열면 navigator.clipboard 가 없으므로
+// 숨긴 textarea 와 execCommand("copy") 로 대신한다.
+async function copyText(text) {
+  if (navigator.clipboard && window.isSecureContext) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+  const ta = el("textarea", { readonly: true, style: "position:fixed;left:-9999px;top:0" });
+  ta.value = text;
+  document.body.append(ta);
+  ta.select();
+  const ok = document.execCommand("copy");
+  ta.remove();
+  if (!ok) throw new Error("복사하지 못했습니다");
+}
+
+function downloadText(name, text) {
+  const url = URL.createObjectURL(new Blob([text], { type: "text/plain;charset=utf-8" }));
+  const a = el("a", { href: url, download: name });
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+// 버튼에 잠깐 확인 표시를 띄운다.
+function flash(btn, ok, label) {
+  const old = [...btn.childNodes];
+  btn.replaceChildren(icon(ok ? "check" : "x"), label);
+  btn.classList.toggle("done", ok);
+  setTimeout(() => { btn.replaceChildren(...old); btn.classList.remove("done"); }, 1400);
+}
+
+const EXT = {
+  go: "go", golang: "go", python: "py", py: "py", javascript: "js", js: "js", jsx: "jsx", typescript: "ts", ts: "ts", tsx: "tsx",
+  java: "java", kotlin: "kt", kt: "kt", swift: "swift", rust: "rs", rs: "rs", c: "c", cpp: "cpp", "c++": "cpp", csharp: "cs", cs: "cs",
+  sql: "sql", sh: "sh", bash: "sh", shell: "sh", zsh: "sh", powershell: "ps1", ps1: "ps1", bat: "bat", cmd: "bat",
+  json: "json", yaml: "yaml", yml: "yaml", toml: "toml", xml: "xml", html: "html", css: "css", markdown: "md", md: "md",
+  dockerfile: "Dockerfile", makefile: "Makefile", php: "php", ruby: "rb", rb: "rb", scala: "scala", r: "r", lua: "lua", dart: "dart",
+};
+
+// fileName 은 저장할 이름을 정한다. hint(펜스 정보나 바로 앞 문장에 나온 파일 이름)가
+// 이 언어의 확장자와 맞으면 그 이름을 쓰고, 아니면 snippet-N.확장자 로 한다.
+function fileName(lang, n, hint) {
+  const ext = EXT[lang.toLowerCase()] || "txt";
+  const names = (hint || "").replace(/https?:\/\/\S+/g, "").match(/[\w.-]+\.[A-Za-z0-9]+/g) || [];
+  const hit = names.reverse().find((x) => x.toLowerCase().endsWith("." + ext.toLowerCase()));
+  if (hit) return hit.replace(/^[.-]+/, "");
+  if (ext === "Dockerfile" || ext === "Makefile") return n > 1 ? `${ext}-${n}` : ext;
+  return `snippet-${n}.${ext}`;
+}
+
+// codeBlock 은 머리줄(언어, 줄 수, 복사, 다운로드)이 붙은 코드 블록을 만든다.
+function codeBlock(lang, code, n, hint) {
+  const copy = el("button", { type: "button", class: "code-btn", title: "코드 복사" }, icon("copy"), "복사");
+  const name = fileName(lang || "", n, hint);
+  const save = el("button", { type: "button", class: "code-btn", title: name + " 로 저장" }, icon("download-simple"), name);
+  copy.addEventListener("click", async () => {
+    try { await copyText(code); flash(copy, true, "복사됨"); } catch (e) { flash(copy, false, "실패"); }
+  });
+  save.addEventListener("click", () => { downloadText(name, code.endsWith("\n") ? code : code + "\n"); flash(save, true, "저장함"); });
+  const lines = code.split("\n").length;
+  return el("div", { class: "code-block" },
+    el("div", { class: "code-head" },
+      el("span", { class: "code-lang", text: lang || "text" }), el("span", { class: "code-lines", text: `${lines}줄` }),
+      el("span", { class: "spacer" }), copy, save),
+    el("pre", {}, el("code", { text: code })));
+}
+
 // renderText 는 답변을 안전하게 그린다. ``` 코드 블록과 `인라인 코드`만 구분하고 나머지는 글자 그대로 둔다.
 function renderText(container, text) {
   const nodes = [];
   const parts = text.split(/```/);
+  let blocks = 0;
   parts.forEach((part, i) => {
     if (i % 2 === 1) {
-      const body = part.replace(/^[^\n]*\n/, "");
-      nodes.push(el("pre", {}, el("code", { text: body.replace(/\n$/, "") })));
+      const nl = part.indexOf("\n");
+      const info = nl >= 0 ? part.slice(0, nl).trim() : "";
+      const lang = info.split(/\s+/)[0] || "";
+      const body = nl >= 0 ? part.slice(nl + 1) : part;
+      // 파일 이름 단서: 펜스 정보(```go main.go) 또는 블록 바로 앞 문단의 마지막 줄
+      const before = (parts[i - 1] || "").trimEnd().split("\n").pop();
+      nodes.push(codeBlock(lang, body.replace(/\n$/, ""), ++blocks, `${before} ${info.slice(lang.length)}`));
       return;
     }
     for (const para of part.split(/\n{2,}/)) {
@@ -282,9 +357,10 @@ function assistantView(container, think) {
         answer.replaceChildren(el("p", { class: "empty-answer", text: r.reasoning ? "본문 없이 추론만 왔습니다. 위 추론 과정 끝에 답이 있을 수 있어요." : "빈 응답이 왔습니다." }));
         details.open = !!r.reasoning;
       }
-      const copy = el("button", { type: "button", class: "icon-btn copy", title: "답변 복사", "aria-label": "답변 복사" }, icon("copy"));
+      const copy = el("button", { type: "button", class: "icon-btn copy", title: "답변 전체 복사", "aria-label": "답변 전체 복사" }, icon("copy"));
       copy.addEventListener("click", async () => {
-        try { await navigator.clipboard.writeText(r.content); copy.replaceChildren(icon("check")); } catch (e) { /* 클립보드 권한 없음 */ }
+        try { await copyText(r.content); copy.replaceChildren(icon("check")); } catch (e) { copy.replaceChildren(icon("x")); }
+        setTimeout(() => copy.replaceChildren(icon("copy")), 1400);
       });
       meta.replaceChildren(...statChips(r, think), ...(emptyAnswer ? [el("span", { class: "chip warn", text: "본문 0자" })] : []), copy);
     },
