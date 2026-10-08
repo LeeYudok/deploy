@@ -182,6 +182,7 @@ func loadToml(path string) (map[string]string, error) {
 // 접속주소와 키가 들어가므로 .env.toml(git 에 안 올림)에만 둔다.
 type Preset struct {
 	ID      string `json:"id"`
+	Order   int    `json:"order"` // 콤보 순서 (작은 수가 먼저, 0 이면 뒤에 id 순)
 	Label   string `json:"label"`
 	BaseURL string `json:"base_url"`
 	Model   string `json:"model"`
@@ -190,7 +191,7 @@ type Preset struct {
 	APIKey  string `json:"-"`
 }
 
-var presetKeys = []string{"label", "base_url", "model", "server", "think", "api_key"}
+var presetKeys = []string{"order", "label", "base_url", "model", "server", "think", "api_key"}
 
 // presetsFrom 은 설정 맵에서 [preset.<id>] 섹션을 모아 id 순으로 돌려준다.
 func presetsFrom(cfg map[string]string) []Preset {
@@ -211,6 +212,8 @@ func presetsFrom(cfg map[string]string) []Preset {
 			byID[id] = p
 		}
 		switch field {
+		case "order":
+			p.Order, _ = strconv.Atoi(v)
 		case "label":
 			p.Label = v
 		case "base_url":
@@ -232,7 +235,19 @@ func presetsFrom(cfg map[string]string) []Preset {
 		}
 		out = append(out, *p)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	sort.Slice(out, func(i, j int) bool {
+		oi, oj := out[i].Order, out[j].Order
+		if oi == 0 {
+			oi = 1 << 30
+		}
+		if oj == 0 {
+			oj = 1 << 30
+		}
+		if oi != oj {
+			return oi < oj
+		}
+		return out[i].ID < out[j].ID
+	})
 	return out
 }
 
@@ -269,7 +284,11 @@ func saveToml(path string, llm map[string]string, presets []Preset, prices map[s
 	}
 	for _, p := range presets {
 		fmt.Fprintf(&b, "\n[preset.%s]\n", p.ID)
-		vals := map[string]string{"label": p.Label, "base_url": p.BaseURL, "model": p.Model, "server": p.Server, "think": p.Think, "api_key": p.APIKey}
+		order := ""
+		if p.Order != 0 {
+			order = strconv.Itoa(p.Order)
+		}
+		vals := map[string]string{"order": order, "label": p.Label, "base_url": p.BaseURL, "model": p.Model, "server": p.Server, "think": p.Think, "api_key": p.APIKey}
 		for _, k := range presetKeys {
 			if vals[k] != "" {
 				fmt.Fprintf(&b, "%s = %s\n", k, strconv.Quote(vals[k]))

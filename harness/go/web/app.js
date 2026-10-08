@@ -162,7 +162,7 @@ function keyHint() {
 function renderPresets() {
   const sel = settingsForm.elements.preset;
   sel.replaceChildren(el("option", { value: "", text: "직접 입력" }),
-    ...presets.map((p) => el("option", { value: p.id, text: `${p.label} · ${p.model}` })));
+    ...presets.map((p, i) => el("option", { value: p.id, text: `${i + 1}. ${p.label} · ${p.model}` })));
   const f = settingsForm.elements;
   const cur = presets.find((p) => sameBase(p.base_url, f.base_url.value) && p.model === f.model.value);
   sel.value = cur ? cur.id : "";

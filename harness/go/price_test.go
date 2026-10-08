@@ -3,6 +3,7 @@ package main
 import (
 	"math"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -51,6 +52,7 @@ func TestMatchOpenRouter(t *testing.T) {
 		"RedHatAI/Qwen3.8-27B-INT4": "qwen/qwen3.8-27b", // 조직 접두어·양자화 꼬리표를 떼고 맞춘다
 		"Qwen/Qwen3.8-27B-AWQ":      "qwen/qwen3.8-27b",
 		"deepseek-v4-flash-0731":    "deepseek/deepseek-v4-flash-0731", // :batch 보다 변형 없는 id
+		"qwen3.8:27b":               "qwen/qwen3.8-27b",                // Ollama 이름:태그
 	}
 	for model, want := range cases {
 		m, ok := matchOpenRouter(model, list)
@@ -63,5 +65,20 @@ func TestMatchOpenRouter(t *testing.T) {
 	}
 	if _, ok := matchOpenRouter("mock-model", list); ok {
 		t.Fatal("mock-model should not match")
+	}
+}
+
+func TestPresetOrder(t *testing.T) {
+	cfg := map[string]string{
+		"preset.z.label": "z", "preset.z.order": "1",
+		"preset.a.label": "a",
+		"preset.m.label": "m", "preset.m.order": "2",
+	}
+	var ids []string
+	for _, p := range presetsFrom(cfg) {
+		ids = append(ids, p.ID)
+	}
+	if strings.Join(ids, ",") != "z,m,a" {
+		t.Fatalf("order %v, want z,m,a", ids)
 	}
 }

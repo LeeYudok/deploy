@@ -144,14 +144,21 @@ func round6(v float64) float64 { return math.Round(v*1e6) / 1e6 }
 var quantSuffix = regexp.MustCompile(`[-_.](int4|int8|w4a16|w8a8|awq|gptq|gguf|fp8|fp4|nvfp4|mlx|bnb|q4_k_m|q8_0|4bit|8bit)$`)
 
 // normModel 은 비교용 모델 이름이다: 소문자, 조직 접두어·변형(:batch 등)·양자화 꼬리표 제거.
+// 조직 접두어가 없는 "이름:태그" 는 Ollama 이름으로 보고 "이름-태그" 로 바꾼다 (qwen3.8:27b → qwen3.8-27b).
 func normModel(id string) string {
 	s := strings.ToLower(strings.TrimSpace(id))
 	s = strings.TrimPrefix(s, "~")
+	ollama := !strings.Contains(s, "/")
 	if i := strings.LastIndex(s, "/"); i >= 0 {
 		s = s[i+1:]
 	}
 	if i := strings.Index(s, ":"); i >= 0 {
-		s = s[:i]
+		name, tag := s[:i], s[i+1:]
+		if ollama && tag != "" && tag != "latest" {
+			s = name + "-" + tag
+		} else {
+			s = name
+		}
 	}
 	for {
 		t := quantSuffix.ReplaceAllString(s, "")
