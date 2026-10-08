@@ -114,3 +114,7 @@ CGO_ENABLED=0 GOOS=windows GOARCH=amd64 GOTOOLCHAIN=go1.27.1 go build -trimpath 
 | Go 배포판 (go1.27.1.windows-amd64.zip) | `harness/go/bin/` | BSD-3-Clause ([go.dev/LICENSE](https://go.dev/LICENSE)) |
 | Phosphor Icons | `harness/go/web/icons.js` (path 인라인) | MIT ([phosphor-icons/core](https://github.com/phosphor-icons/core)) |
 | Playwright (`@playwright/test`) | `harness/e2e` 개발 의존성 (레포에 넣지 않음) | Apache-2.0 |
+
+---
+
+made by doksam
