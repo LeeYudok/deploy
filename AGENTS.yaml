@@ -1,0 +1,144 @@
+# Machine-readable companion to AGENTS.md: component graph, commands, config keys, policies.
+# Never put secret values or internal host names here - only file paths and KEY NAMES (public repo).
+# Quote every date/version ('2026-01-31', '1.10') so YAML does not convert its type.
+# After editing, run: scripts/check-agents-yaml.sh
+schema_version: '1.0'
+
+meta:
+  name: onprem-llm-testbed
+  description: 'Test harness for on-prem OpenAI-compatible LLM servers (sglang, vLLM, Ollama) in an air-gapped network'
+  owner: LeeYudok
+  updated: '2026-10-09'
+  repo_url: 'https://github.com/LeeYudok/onprem-llm-testbed'
+  visibility: public
+  tracker: github
+  issue_tracker_url: 'https://github.com/LeeYudok/onprem-llm-testbed/issues'
+  issue_rule: 'Open an issue first; reference #N in branch, commits and PR (Closes #N)'
+  branch_strategy:
+    main: 'default branch (renamed from master 2026-10-09). No direct commits'
+    work: 'batch/claude-<YYYYMMDD>-<8 hex> -> PR -> merge commit (no squash)'
+
+environments:
+  local:
+    toolchain: {go: '1.21 (go.mod)', go_for_exe: 'go1.27.1', python: '3.8+', node: 'e2e only'}
+    note: 'Mac dev box; local Ollama on 11434 is reachable, internal LLM servers are not'
+  target:
+    host: 'Windows 64-bit PC in the air-gapped network'
+    runtime: 'harness/go/bin/llmtest.exe alone (web UI embedded), or python llmtest.py'
+  ci: none
+
+nodes:
+- id: go-cli
+  type: go-binary
+  label: 'Go client: CLI modes (-p, -chat, -scenario, -bench, -models) and web UI server (-web)'
+  path: harness/go
+  module: harness/go/go.mod
+- id: web-ui
+  type: static-web
+  label: 'Web UI (vanilla HTML/JS, go:embed into the binary)'
+  path: harness/go/web
+- id: exe
+  type: build-artifact
+  label: 'Prebuilt Windows binary, committed with SHA256SUMS'
+  path: harness/go/bin/llmtest.exe
+- id: py-client
+  type: python-script
+  label: 'Python client (stdlib only), same flags/config/run records as go-cli except -web'
+  path: harness/python/llmtest.py
+- id: scenarios
+  type: data
+  label: 'Multi-turn scenario JSON (ko/en/ja/zh)'
+  path: harness/scenarios
+- id: runs
+  type: data
+  label: 'Run records runs/YYYY-MM-DD.jsonl (gitignored)'
+  path: harness/runs
+- id: config
+  type: config
+  label: 'Connection, presets and prices (gitignored, contains API keys)'
+  path: harness/.env.toml
+- id: e2e
+  type: test-suite
+  label: 'Playwright E2E for the web UI'
+  path: harness/e2e
+- id: mock-llm
+  type: test-double
+  label: 'Mock OpenAI-compatible LLM (owned_by=sglang)'
+  path: harness/e2e/mock-llm.mjs
+- id: llm-server
+  type: external
+  label: 'OpenAI-compatible LLM server (/v1/models, /v1/chat/completions)'
+- id: price-catalogs
+  type: external
+  label: 'Public model price lists: OpenRouter, OrcaRouter (/v1/models)'
+
+edges:
+- {from: go-cli, to: config, rel: reads_writes, note: 'web UI save rewrites [llm], [preset.*], [price.*]'}
+- {from: py-client, to: config, rel: reads}
+- {from: go-cli, to: llm-server, rel: calls, env: [LLM_BASE_URL, LLM_MODEL, LLM_API_KEY, LLM_SERVER, LLM_THINK, LLM_REASONING_EFFORT, LLM_TEMPERATURE, LLM_MAX_TOKENS, LLM_SYSTEM]}
+- {from: py-client, to: llm-server, rel: calls, env: [LLM_BASE_URL, LLM_MODEL, LLM_API_KEY, LLM_SERVER, LLM_THINK, LLM_REASONING_EFFORT, LLM_TEMPERATURE, LLM_MAX_TOKENS, LLM_SYSTEM]}
+- {from: go-cli, to: scenarios, rel: reads}
+- {from: py-client, to: scenarios, rel: reads}
+- {from: go-cli, to: runs, rel: appends_reads}
+- {from: py-client, to: runs, rel: appends}
+- {from: go-cli, to: price-catalogs, rel: fetches, note: 'web UI price compare/apply only'}
+- {from: go-cli, to: web-ui, rel: embeds}
+- {from: exe, to: go-cli, rel: built_from}
+- {from: e2e, to: go-cli, rel: launches, env: [HARNESS_BIN, HARNESS_PORT]}
+- {from: e2e, to: mock-llm, rel: launches, env: [MOCK_PORT, MOCK_SLOTS]}
+
+ports:
+- {port: 8787, service: 'web UI (-web, scripts/dev-web.sh)', scope: local}
+- {port: 18901, service: 'mock LLM default (MOCK_PORT)', scope: e2e}
+- {port: 18902, service: 'harness web UI under E2E (HARNESS_PORT)', scope: e2e}
+- {port: 11434, service: 'local Ollama (Mac app, preset ollama)', scope: local}
+
+commands:
+  local:
+    go_test: 'cd harness/go && go test ./...'
+    web_dev: scripts/dev-web.sh
+    web: 'cd harness/go && go run . -web'
+    python_ping: 'python3 harness/python/llmtest.py -preset ollama -think off -p ping'
+  build:
+    exe: 'cd harness/go && GOTOOLCHAIN=go1.27.1 CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o bin/llmtest.exe . && (cd bin && shasum -a 256 go1.27.1.windows-amd64.zip llmtest.exe > SHA256SUMS)'
+  e2e:
+    install: 'cd harness/e2e && npm install'
+    test: 'cd harness/e2e && E2E_CHANNEL=chrome npx playwright test'
+  checks:
+    agents_yaml: scripts/check-agents-yaml.sh
+    public_leak: "git diff --cached | grep -E '^\\+' | grep -iE '192\\.168\\.|doksam\\.com'"
+
+secret_files:
+- host: local
+  path: harness/.env.toml
+  keys: [base_url, model, api_key, server, think, reasoning_effort, temperature, max_tokens, system, order, label, input, output, source]
+  note: 'TOML keys under [llm], [preset.<id>], [price."<model>"]; key names observed 2026-10-09. Never print the file'
+  used_by: 'go-cli, py-client'
+
+env_keys:
+  go-cli: [LLM_BASE_URL, LLM_MODEL, LLM_API_KEY, LLM_SERVER, LLM_THINK, LLM_REASONING_EFFORT, LLM_TEMPERATURE, LLM_MAX_TOKENS, LLM_SYSTEM]
+  py-client: [LLM_BASE_URL, LLM_MODEL, LLM_API_KEY, LLM_SERVER, LLM_THINK, LLM_REASONING_EFFORT, LLM_TEMPERATURE, LLM_MAX_TOKENS, LLM_SYSTEM]
+  e2e: [E2E_CHANNEL, E2E_HEADED, HARNESS_BIN, HARNESS_PORT, MOCK_PORT, MOCK_SLOTS]
+
+policies:
+- {id: public-repo, rule: 'No internal host names or IPs in commits, issues or PRs; use <HOST>:<PORT>', source: AGENTS.md}
+- {id: stdlib-only, rule: 'Go and Python clients use the standard library only so they rebuild offline', source: README.md}
+- {id: vanilla-web-ui, rule: 'Web UI is vanilla HTML/JS embedded with go:embed, no Node build; icons are inline Phosphor paths, no emoji', source: AGENTS.md}
+- {id: rebuild-exe, rule: 'Changing harness/go requires rebuilding bin/llmtest.exe and SHA256SUMS with go1.27.1', source: harness/go/README.md}
+- {id: python-parity, rule: 'Keep python/llmtest.py flags and runs/*.jsonl format in step with the Go client', source: harness/python/README.md}
+- {id: playwright-pin, rule: '@playwright/test pinned to 1.63.0', source: harness/e2e/package.json}
+- {id: agents-yaml-sync, rule: 'Update AGENTS.md and AGENTS.yaml together when components, paths, commands or env keys change; run scripts/check-agents-yaml.sh', source: AGENTS.md}
+
+known_issues:
+- {id: config-overwrite, summary: 'Editing .env.toml by hand while an old web UI runs: its next save overwrites the file from memory (presets were lost once). Change config through /api/config, /api/prices', source: AGENTS.md, files: [harness/go/web.go]}
+- {id: toml-section-comment, summary: 'A comment after a [section] line breaks the minimal TOML parser; put comments on their own line', source: AGENTS.md, files: [harness/go/llm.go, harness/python/llmtest.py]}
+- {id: orcarouter-not-openrouter, summary: 'OrcaRouter (orcarouter.ai) and OpenRouter are different catalogs', source: harness/README.md, files: [harness/go/price.go]}
+- {id: playwright-shared-window, summary: 'The user shares the Playwright window; verify in a new tab or headless and do not fix the resolution', source: AGENTS.md}
+
+docs:
+- {path: AGENTS.md, what: 'Agent instructions (human SoT)'}
+- {path: README.md, what: 'Overview and quick start'}
+- {path: harness/README.md, what: 'Config, modes, web UI, prices, bench, run records'}
+- {path: harness/go/README.md, what: 'Go build on Windows / offline'}
+- {path: harness/python/README.md, what: 'Python client'}
+- {path: harness/e2e/README.md, what: 'E2E with mock LLM'}
