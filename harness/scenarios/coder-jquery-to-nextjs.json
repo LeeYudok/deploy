@@ -1,0 +1,98 @@
+{
+  "name": "coder-jquery-to-nextjs",
+  "system": "You are a senior front-end engineer migrating a legacy jQuery mobile web app to Next.js. 한국어로 답하고, 코드는 파일마다 ```tsx 또는 ```ts 펜스로 감싸고 펜스 바로 위에 파일 경로를 적는다.\n\n이전 규칙:\n1. Next.js 15 App Router, TypeScript, React 19 를 쓴다. Pages Router(getServerSideProps, getStaticProps, next/router)는 쓰지 않는다.\n2. 서버 컴포넌트를 기본으로 하고, 상태·이벤트가 필요한 컴포넌트만 \"use client\" 로 분리한다.\n3. jQuery, document.querySelector 같은 DOM 직접 조작, innerHTML, dangerouslySetInnerHTML, var, any 타입을 쓰지 않는다.\n4. 계산·변환은 lib/fx.ts 의 순수 함수로 두고 컴포넌트에서 가져다 쓴다.\n5. 자동 검증용 data-test 속성은 옛 화면과 같은 이름으로 유지한다.\n\n백엔드 API 는 그대로 쓴다: GET /api/fx-rates?date=YYYYMMDD → { list: [ { cur: \"USD\", name: \"미국 달러\", baseRate: \"013502500\", spread: \"000175000\" } ] }\n- 환율 값은 소수 4자리를 뺀 9자리 문자열이다 (\"013502500\" → 1350.25).\n- spread 는 100000 으로 나눈 값이 % 다 (\"000175000\" → 1.75%).\n- JPY 환율은 100엔 기준이다.\n- 서버 컴포넌트에서 부를 때는 환경변수 API_BASE_URL 을 앞에 붙인다.",
+  "turns": [
+    {
+      "user": "옛 화면 fx_list.html 의 스크립트:\n\n```js\n$(document).ready(function () {\n  var today = moment().format(\"YYYYMMDD\");\n  $.getJSON(\"/api/fx-rates\", { date: today }, function (res) {\n    var html = \"\";\n    $.each(res.list, function (i, r) {\n      html += \"<li class='rate' data-test='rate-row' data-cur='\" + r.cur + \"'>\" +\n        r.name + \" <b>\" + (Number(r.baseRate) / 10000).toFixed(2) + \"</b></li>\";\n    });\n    $(\"#rateList\").html(html);\n  });\n\n  $(\"#search\").on(\"keyup\", function () {\n    var q = $(this).val().toLowerCase();\n    $(\"#rateList .rate\").each(function () {\n      $(this).toggle($(this).text().toLowerCase().indexOf(q) > -1);\n    });\n  });\n\n  $(\"#rateList\").on(\"click\", \".rate\", function () {\n    location.href = \"/fx_detail.html?cur=\" + $(this).data(\"cur\");\n  });\n});\n```\n\n옛 상세 화면 fx_detail.html 은 cur 파라미터로 같은 API 를 불러 한 통화를 찾고, 기준환율(data-test=\"base-rate\"), 스프레드(data-test=\"spread\"), 원화 환산 계산기(입력 data-test=\"amount\", 결과 data-test=\"result\")를 보여 준다.\n\n이 두 화면을 Next.js 로 옮기는 계획을 세워 줘. 만들 파일 경로 목록과, 각 파일이 서버 컴포넌트인지 클라이언트 컴포넌트인지와 그 이유를 적어. 코드는 아직 쓰지 마.",
+      "expect": [
+        "app/",
+        "page.tsx",
+        "use client",
+        "lib/fx.ts",
+        "[cur]"
+      ]
+    },
+    {
+      "user": "lib/fx.ts 를 써 줘. parseRate(raw: string): number, formatSpread(raw: string): string (예: \"1.75%\"), calcKrw(amount: number, rateRaw: string, cur: string): number 세 함수를 export 한다.",
+      "expect": [
+        "export function parseRate|export const parseRate",
+        "export function calcKrw|export const calcKrw",
+        "10000|1e4",
+        "100000|1e5",
+        "JPY",
+        ": number"
+      ],
+      "reject": [
+        "$(|jquery",
+        "document.",
+        "innerhtml",
+        "dangerouslysetinnerhtml",
+        "var ",
+        ": any|<any>|as any",
+        "window."
+      ]
+    },
+    {
+      "user": "목록 페이지를 써 줘. app/fx/page.tsx 는 서버 컴포넌트로 오늘 환율을 불러오고, 검색(대소문자 무시)과 목록 표시는 클라이언트 컴포넌트로 분리한다. 행을 누르면 /fx/[cur] 로 이동한다. data-test=\"rate-row\" 는 유지한다.",
+      "expect": [
+        "export default",
+        "use client",
+        "useState",
+        "next/link|next/navigation",
+        "rate-row",
+        "key=",
+        "toLowerCase|toUpperCase|localeCompare",
+        "API_BASE_URL"
+      ],
+      "reject": [
+        "$(|jquery",
+        "document.",
+        "innerhtml",
+        "dangerouslysetinnerhtml",
+        "var ",
+        ": any|<any>|as any",
+        "getserversideprops|getstaticprops|getinitialprops",
+        "next/router"
+      ]
+    },
+    {
+      "user": "상세 페이지 app/fx/[cur]/page.tsx 와 환산기 클라이언트 컴포넌트를 써 줘. Next.js 15 규약대로 params 를 받고, lib/fx.ts 의 함수를 쓴다. data-test 이름(base-rate, spread, amount, result)을 유지한다. 통화가 목록에 없으면 notFound() 를 부른다.",
+      "expect": [
+        "await params|use(params)",
+        "notFound(",
+        "calcKrw",
+        "formatSpread",
+        "use client",
+        "onChange",
+        "base-rate",
+        "result"
+      ],
+      "reject": [
+        "$(|jquery",
+        "document.",
+        "innerhtml",
+        "dangerouslysetinnerhtml",
+        "var ",
+        ": any|<any>|as any",
+        "getserversideprops|getstaticprops|getinitialprops",
+        "next/router"
+      ]
+    },
+    {
+      "user": "네가 쓴 lib/fx.ts 기준으로 formatSpread(\"000175000\") 와 calcKrw(300, \"013502500\", \"USD\") 의 결과를 각각 값만 답해.",
+      "think": "on",
+      "expect": [
+        "1.75%",
+        "405075|405,075"
+      ]
+    },
+    {
+      "user": "옛 코드의 $(document).ready, $(\"#search\").on(\"keyup\") 필터, $(\"#rateList\").on(\"click\", \".rate\") 위임 이벤트는 새 코드에서 각각 무엇으로 바뀌었는지 한 문장씩 설명해.",
+      "expect": [
+        "서버 컴포넌트|server component|렌더",
+        "useState|onChange",
+        "Link|router.push|useRouter"
+      ]
+    }
+  ]
+}

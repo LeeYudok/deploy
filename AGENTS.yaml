@@ -47,7 +47,7 @@ nodes:
   path: harness/python/llmtest.py
 - id: scenarios
   type: data
-  label: 'Multi-turn scenario JSON: memory (ko/en/ja/zh), think toggle, coder-* (code reading, bugfix, generation, SQL, JSON output, legacy web framework); turns check expect (must contain) and reject (code must not contain)'
+  label: 'Multi-turn scenario JSON: memory (ko/en/ja/zh), think toggle, coder-* (code reading, bugfix, generation, SQL, JSON output, legacy web framework, jQuery to Next.js); turns check expect (must contain) and reject (code must not contain)'
   path: harness/scenarios
 - id: runs
   type: data

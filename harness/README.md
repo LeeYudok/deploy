@@ -100,6 +100,7 @@ think = ""             # 고르면 thinking 도 이 값으로
 | `coder-sql.json` | PostgreSQL 쿼리 작성 (집계·상위 N, 주문 없는 고객, 인덱스) |
 | `coder-json-format.json` | 컴파일 오류를 `{file, line, fix}` JSON 하나로만 답하는지 (thinking off) |
 | `coder-legacy-web.json` | 업무용 AI 코딩 도우미 수준: 가상의 레거시 웹 프레임워크 규약을 주고, 기존 목록 화면의 결함 짚기 → 상세·환산 화면 새로 쓰기 → 순수 함수 분리 → 환산값 계산 → 추가 수정(이전 영업일 재시도) → 재시도 날짜 계산. 코드 턴은 `reject` 로 jQuery·console·debugger·var·innerHTML 을 금지한다 |
+| `coder-jquery-to-nextjs.json` | jQuery 목록·상세 화면을 Next.js 15 App Router + TypeScript 로 옮기기: 이전 계획(서버·클라이언트 컴포넌트) → `lib/fx.ts` 순수 함수 → 목록·검색 → 상세 `[cur]`·환산기(`await params`, `notFound()`) → 값 계산 → jQuery 패턴 대응 설명. `reject` 로 jQuery·DOM 직접 조작·`dangerouslySetInnerHTML`·`any`·Pages Router API 를 잡는다 |
 
 `coder-*` 는 사내 LLM 을 코딩 도우미로 쓸 때를 본다. 답이 하나로 정해지는 문제만 골랐지만, 검사는 문자열이 들어 있는지·없는지만 보므로 코드를 실행해 맞는지까지는 확인하지 않는다.
 
