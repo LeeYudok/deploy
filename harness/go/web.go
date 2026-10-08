@@ -48,7 +48,7 @@ type webServer struct {
 
 func runWeb(addr string, open bool, cfgPath string, cfg map[string]string, s Settings, timeout time.Duration, scenarios string) error {
 	if cfgPath == "" {
-		// 설정파일이 없으면 test/ 폴더(시나리오 폴더 옆)에, 그것도 없으면 현재 폴더에 만든다.
+		// 설정파일이 없으면 harness/ 폴더(시나리오 폴더 옆)에, 그것도 없으면 현재 폴더에 만든다.
 		if dir := findUp("scenarios", true); dir != "" {
 			cfgPath = filepath.Join(filepath.Dir(dir), ".env.toml")
 		} else {

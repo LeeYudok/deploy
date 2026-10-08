@@ -5,7 +5,7 @@ Go 클라이언트와 같은 플래그·설정파일·시나리오를 쓰는 Pyt
 멀티턴·thinking 조절·시나리오 형식은 [상위 README](../README.md) 참고.
 
 ```bat
-cd test
+cd harness
 copy .env.toml.example .env.toml
 notepad .env.toml
 cd python

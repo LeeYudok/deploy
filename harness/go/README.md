@@ -7,10 +7,10 @@ sglang 등 OpenAI 호환 API(`/v1/chat/completions`)를 호출하는 테스트 �
 ## Windows 64비트에서 바로 실행 (Go 설치 불필요)
 
 `bin/llmtest.exe` 는 미리 빌드한 Windows 64비트 실행파일이다(Go 1.27.1, CGO 없음).
-`test` 폴더에 `.env.toml` 을 만들고 바로 실행한다 (exe 폴더에서 상위 2단계까지 찾는다).
+`harness` 폴더에 `.env.toml` 을 만들고 바로 실행한다 (exe 폴더에서 상위 2단계까지 찾는다).
 
 ```bat
-cd test
+cd harness
 copy .env.toml.example .env.toml
 notepad .env.toml
 cd go\bin
@@ -59,7 +59,7 @@ go version
 접속주소는 git 에 올리지 않는다. 예제 파일을 복사해서 직접 입력한다.
 
 ```bat
-cd test
+cd harness
 copy .env.toml.example .env.toml
 notepad .env.toml
 ```
@@ -79,7 +79,7 @@ reasoning_effort = ""                  # none / low / medium / high
 ### 3. 실행
 
 ```bat
-cd test\go
+cd harness\go
 go run . -models
 go run . -p "안녕하세요"
 go run . -stream -p "Go 언어 장점 3가지"

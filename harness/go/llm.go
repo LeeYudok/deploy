@@ -177,7 +177,7 @@ func saveToml(path string, llm map[string]string) error {
 }
 
 // findUp 은 현재 디렉터리와 실행파일 디렉터리에서 시작해 상위 2단계까지 name 을 찾는다.
-// test/go/bin/llmtest.exe 로 실행해도 test/.env.toml, test/scenarios 를 찾는다.
+// harness/go/bin/llmtest.exe 로 실행해도 harness/.env.toml, harness/scenarios 를 찾는다.
 func findUp(name string, wantDir bool) string {
 	var starts []string
 	if wd, err := os.Getwd(); err == nil {
