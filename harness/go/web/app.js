@@ -85,6 +85,30 @@ if (store("sidebar") === "hidden") setCollapsed(true);
 $("#closeSidebar").addEventListener("click", () => sidebar(false));
 $("#backdrop").addEventListener("click", () => sidebar(false));
 
+// ---- made by doksam 반짝임 ----
+
+// 별 세 개가 서로 다른 박자로 반짝이고, 한 번 반짝일 때마다(투명한 순간에) 글자 주위의 임의의 자리·크기로 옮긴다.
+(function sparkle() {
+  const host = $(".credit-text");
+  if (!host) return;
+  const place = (s) => {
+    const w = host.offsetWidth;
+    const h = host.offsetHeight;
+    const size = 6 + Math.random() * 8;
+    s.style.setProperty("--s", `${size.toFixed(1)}px`);
+    s.style.left = `${(Math.random() * (w + 12) - 6 - size / 2).toFixed(1)}px`;
+    s.style.top = `${(Math.random() * (h + 14) - 7 - size / 2).toFixed(1)}px`;
+  };
+  for (let i = 0; i < 3; i++) {
+    const s = el("span", { class: "spark", "aria-hidden": "true" });
+    s.style.setProperty("--d", `${(1.5 + Math.random()).toFixed(2)}s`);
+    s.style.animationDelay = `${(i * 0.55).toFixed(2)}s`;
+    place(s);
+    s.addEventListener("animationiteration", () => place(s));
+    host.append(s);
+  }
+})();
+
 // ---- 설정 ----
 
 function formValues() {

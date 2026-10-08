@@ -190,15 +190,15 @@ button:focus-visible, .segmented label:focus-within { outline: 2px solid var(--a
   -webkit-background-clip: text; background-clip: text; color: transparent;
   animation: credit-shine 3.6s ease-in-out infinite;
 }
-.credit-text::before, .credit-text::after {
-  content: ""; position: absolute; width: 12px; height: 12px;
+/* 별은 app.js 가 만들고, 한 번 반짝일 때마다 글자 주위의 임의의 자리로 옮긴다 */
+.spark {
+  position: absolute; width: var(--s, 10px); height: var(--s, 10px); pointer-events: none;
   background: linear-gradient(135deg, var(--shine), var(--accent-2));
   clip-path: polygon(50% 0, 62% 38%, 100% 50%, 62% 62%, 50% 100%, 38% 62%, 0 50%, 38% 38%);
   filter: drop-shadow(0 0 4px var(--accent-2));
-  animation: credit-twinkle 1.8s ease-in-out infinite;
+  opacity: 0;
+  animation: credit-twinkle var(--d, 1.8s) ease-in-out infinite;
 }
-.credit-text::before { right: 0; top: -6px; }
-.credit-text::after { right: -10px; top: 8px; width: 8px; height: 8px; animation-delay: .9s; }
 @keyframes credit-shine { 0% { background-position: 100% 0; } 60%, 100% { background-position: 0 0; } }
 @keyframes credit-twinkle { 0%, 100% { opacity: 0; transform: scale(.3) rotate(0deg); } 50% { opacity: 1; transform: scale(1) rotate(45deg); } }
 .path { margin: 4px 0 0; font-family: var(--mono); font-size: 11px; color: var(--muted); word-break: break-all; }
@@ -503,5 +503,6 @@ button:focus-visible, .segmented label:focus-within { outline: 2px solid var(--a
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .spark { display: none; }
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
