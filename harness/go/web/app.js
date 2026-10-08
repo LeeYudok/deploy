@@ -62,7 +62,26 @@ function sidebar(open) {
   $("#sidebar").classList.toggle("open", open);
   $("#backdrop").hidden = !open;
 }
-$("#openSidebar").addEventListener("click", () => sidebar(true));
+// 데스크톱에서는 설정 패널을 접고 펴고(상태를 기억한다), 좁은 화면에서는 서랍을 연다.
+const app = $(".app");
+const narrow = matchMedia("(max-width: 900px)");
+function setCollapsed(on) {
+  app.classList.toggle("collapsed", on);
+  $("#openSidebar").setAttribute("aria-expanded", String(!on));
+  store("sidebar", on ? "hidden" : null);
+}
+function toggleSidebar() {
+  if (narrow.matches) sidebar(!$("#sidebar").classList.contains("open"));
+  else setCollapsed(!app.classList.contains("collapsed"));
+}
+$("#openSidebar").addEventListener("click", toggleSidebar);
+document.addEventListener("keydown", (e) => {
+  if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "b") {
+    e.preventDefault();
+    toggleSidebar();
+  }
+});
+if (store("sidebar") === "hidden") setCollapsed(true);
 $("#closeSidebar").addEventListener("click", () => sidebar(false));
 $("#backdrop").addEventListener("click", () => sidebar(false));
 

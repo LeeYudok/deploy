@@ -106,7 +106,11 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .icon svg { width: 100%; height: 100%; }
 
 /* ---- 레이아웃 ---- */
-.app { display: grid; grid-template-columns: 320px 1fr; height: 100vh; height: 100dvh; }
+.app { display: grid; grid-template-columns: 320px 1fr; height: 100vh; height: 100dvh; transition: grid-template-columns .25s ease; }
+/* 데스크톱에서 설정 패널을 접는다 (Ctrl+B). 900px 아래는 서랍이라 영향이 없다. */
+.app.collapsed { grid-template-columns: 0 1fr; }
+.app.collapsed .sidebar { overflow: hidden; border-right-color: transparent; visibility: hidden; }
+#openSidebar[aria-expanded="false"] { color: var(--accent); }
 .sidebar {
   display: flex; flex-direction: column; min-height: 0;
   background: var(--surface);
@@ -476,6 +480,8 @@ button:focus-visible, .segmented label:focus-within { outline: 2px solid var(--a
   .sidebar.open { transform: none; }
   .backdrop { position: fixed; inset: 0; z-index: 10; background: rgba(0, 0, 0, 0.35); backdrop-filter: blur(2px); }
   .only-mobile { display: inline-grid; }
+  .app.collapsed { grid-template-columns: 1fr; }
+  .app.collapsed .sidebar { visibility: visible; }
   .topbar { padding: 10px 12px; }
   #resetChat .label { display: none; }
   .thread, .composer, .scenario-wrap { padding-left: 16px; padding-right: 16px; }

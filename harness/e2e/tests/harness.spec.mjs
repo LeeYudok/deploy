@@ -171,6 +171,21 @@ test("기록 탭: 호출과 시나리오가 쌓인다", async () => {
   expect(existsSync(join(tmp, "runs", files[0]))).toBe(true);
 });
 
+test("설정 패널 접기·펴기 (버튼, 새로고침 유지, Ctrl+B)", async () => {
+  const app = page.locator(".app");
+  const toggle = page.locator("#openSidebar");
+  await expect(page.locator("#sidebar")).toBeVisible();
+  await toggle.click();
+  await expect(app).toHaveClass(/collapsed/);
+  await expect(page.locator("#sidebar")).toBeHidden();
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
+  await page.reload();
+  await expect(app).toHaveClass(/collapsed/);
+  await page.keyboard.press("Control+B");
+  await expect(app).not.toHaveClass(/collapsed/);
+  await expect(page.locator("#sidebar")).toBeVisible();
+});
+
 test("테마는 새로고침 뒤에도 유지된다", async () => {
   const btn = page.locator("#themeBtn");
   for (let i = 0; i < 3 && (await page.evaluate(() => document.documentElement.dataset.theme)) !== "dark"; i++) {
