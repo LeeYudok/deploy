@@ -246,7 +246,7 @@ func findPreset(presets []Preset, id string) (Preset, bool) {
 }
 
 // saveToml 은 [llm] 섹션과 프리셋 섹션을 .env.toml 로 쓴다. 기존 주석은 남지 않는다.
-func saveToml(path string, llm map[string]string, presets []Preset) error {
+func saveToml(path string, llm map[string]string, presets []Preset, prices map[string]Price) error {
 	var b strings.Builder
 	b.WriteString("# LLM 접속 설정 (웹 UI 에서 저장함)\n[llm]\n")
 	written := map[string]bool{}
@@ -276,6 +276,7 @@ func saveToml(path string, llm map[string]string, presets []Preset) error {
 			}
 		}
 	}
+	writePrices(&b, prices)
 	if err := os.WriteFile(path, []byte(b.String()), 0o600); err != nil {
 		return err
 	}

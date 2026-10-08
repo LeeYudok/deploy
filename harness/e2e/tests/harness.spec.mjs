@@ -187,6 +187,25 @@ test("부하 테스트: 슬롯 4개인 모의 서버에서 권장 동시 수 4",
   await expect(page.locator("#benchBody .chart .tag").first()).toContainText("권장");
 });
 
+test("토큰 비용: 단가를 넣으면 기록 탭과 답변 칩에 환산 비용이 나온다", async () => {
+  await tab("history");
+  const row = page.locator("#histBody tr", { hasText: "mock-model" }).filter({ has: page.locator(".price-cell") });
+  await expect(row.locator("td").nth(6)).toHaveText("단가 미설정");
+  await row.locator(".price-cell input").nth(0).fill("1");
+  await row.locator(".price-cell input").nth(1).fill("2");
+  await row.locator("button", { hasText: "저장" }).click();
+  await expect(row.locator("td").nth(6)).toContainText("$");
+  await expect(page.locator("#histBody .tile", { hasText: "환산 비용" })).toContainText("$");
+  const cfg = readFileSync(join(tmp, ".env.toml"), "utf8");
+  expect(cfg).toContain('[price."mock-model"]');
+  expect(cfg).toContain("[preset.mock]");
+
+  await page.reload();
+  await tab("chat");
+  const a = await send("ping", "off");
+  await expect(a.locator(".meta .chip", { hasText: "$" })).toBeVisible();
+});
+
 test("설정 패널 접기·펴기 (버튼, 새로고침 유지, Ctrl+B)", async () => {
   const app = page.locator(".app");
   const toggle = page.locator("#openSidebar");

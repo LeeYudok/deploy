@@ -45,6 +45,7 @@ type webServer struct {
 	scenarios string            // 시나리오 파일·폴더 (쉼표로 여러 개)
 	detected  map[string]string // base_url → 판별한 서버 종류
 	presets   []Preset          // .env.toml 의 [preset.*]
+	prices    map[string]Price  // .env.toml 의 [price."<모델>"]
 	logs      *logBuf           // 로그 탭과 stdout
 	runs      *runStore         // 실행 기록 (runs/*.jsonl)
 }
@@ -64,7 +65,7 @@ func runWeb(addr string, open bool, cfgPath string, cfg map[string]string, s Set
 	if abs, err := filepath.Abs(cfgPath); err == nil {
 		cfgPath = abs
 	}
-	ws := &webServer{settings: s, cfgPath: cfgPath, cfg: cfg, client: &http.Client{Timeout: timeout}, scenarios: scenarios, detected: map[string]string{}, presets: presetsFrom(cfg), logs: &logBuf{boot: time.Now().Format("2006-01-02 15:04:05.000")}}
+	ws := &webServer{settings: s, cfgPath: cfgPath, cfg: cfg, client: &http.Client{Timeout: timeout}, scenarios: scenarios, detected: map[string]string{}, presets: presetsFrom(cfg), prices: pricesFrom(cfg), logs: &logBuf{boot: time.Now().Format("2006-01-02 15:04:05.000")}}
 
 	ws.runs = newRunStore(runsDir(), func(msg string) { ws.logs.add("runs", "warn", msg, "") })
 	static, err := fs.Sub(webFiles, "web")
@@ -81,6 +82,7 @@ func runWeb(addr string, open bool, cfgPath string, cfg map[string]string, s Set
 	mux.HandleFunc("/api/runs", ws.handleRuns)
 	mux.HandleFunc("/api/runs/scenario", ws.handleRunScenario)
 	mux.HandleFunc("/api/bench", ws.handleBench)
+	mux.HandleFunc("/api/prices", ws.handlePrices)
 
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
@@ -204,10 +206,11 @@ func (ws *webServer) handleConfig(w http.ResponseWriter, r *http.Request) {
 		}
 		out := struct {
 			Settings
-			APIKeySet  bool         `json:"api_key_set"`
-			ConfigPath string       `json:"config_path"`
-			Presets    []presetView `json:"presets"`
-		}{ws.settings, ws.settings.APIKey != "", ws.cfgPath, views}
+			APIKeySet  bool             `json:"api_key_set"`
+			ConfigPath string           `json:"config_path"`
+			Presets    []presetView     `json:"presets"`
+			Prices     map[string]Price `json:"prices"`
+		}{ws.settings, ws.settings.APIKey != "", ws.cfgPath, views, ws.prices}
 		ws.mu.Unlock()
 		writeJSON(w, http.StatusOK, out)
 
@@ -265,7 +268,7 @@ func (ws *webServer) handleConfig(w http.ResponseWriter, r *http.Request) {
 		llm["temperature"] = strconv.FormatFloat(s.Temperature, 'f', -1, 64)
 		llm["max_tokens"] = strconv.Itoa(s.MaxTokens)
 		llm["system"] = s.System
-		if err := saveToml(ws.cfgPath, llm, ws.presets); err != nil {
+		if err := saveToml(ws.cfgPath, llm, ws.presets, ws.prices); err != nil {
 			writeErr(w, http.StatusInternalServerError, err)
 			return
 		}
@@ -591,4 +594,42 @@ func (ws *webServer) handleBench(w http.ResponseWriter, r *http.Request) {
 	}
 	ws.logs.add("bench", "info", fmt.Sprintf("부하 테스트 끝 · 권장 동시 수 %d", rec), "")
 	send("done", map[string]any{"levels": res, "recommend": rec, "server": opt.Server})
+}
+
+// handlePrices 는 모델 하나의 단가를 저장한다. input·output 이 둘 다 0 이면 지운다 (issue #18).
+func (ws *webServer) handlePrices(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	var in struct {
+		Model string `json:"model"`
+		Price
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	if strings.TrimSpace(in.Model) == "" || in.Input < 0 || in.Output < 0 || in.Input > 1e6 || in.Output > 1e6 {
+		writeErr(w, http.StatusBadRequest, errors.New("모델 이름과 0 이상의 단가를 넣으세요"))
+		return
+	}
+	ws.mu.Lock()
+	defer ws.mu.Unlock()
+	if in.Price.set() {
+		ws.prices[in.Model] = in.Price
+	} else {
+		delete(ws.prices, in.Model)
+	}
+	llm := map[string]string{}
+	for k, v := range ws.cfg {
+		if rest, ok := strings.CutPrefix(k, "llm."); ok {
+			llm[rest] = v
+		}
+	}
+	if err := saveToml(ws.cfgPath, llm, ws.presets, ws.prices); err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, ws.prices)
 }

@@ -184,6 +184,7 @@ function applyPreset(id) {
 async function loadConfig() {
   const c = await api("/api/config");
   presets = c.presets || [];
+  prices = c.prices || {};
   savedKey = { base: c.base_url, set: c.api_key_set };
   const f = settingsForm.elements;
   f.base_url.value = c.base_url || "";
@@ -348,6 +349,19 @@ function renderText(container, text) {
 
 function fmtSec(ms) { return (ms / 1000).toFixed(ms < 10000 ? 2 : 1) + "s"; }
 
+// ---- 단가 (100만 토큰당 USD, .env.toml 의 [price."<모델>"]) ----
+
+let prices = {};
+const usd = (v) => (v === 0 ? "$0" : v < 0.01 ? `$${v.toFixed(5)}` : v < 1 ? `$${v.toFixed(4)}` : `$${v.toFixed(2)}`);
+const priceOf = (model) => {
+  const p = prices[model];
+  return p && (p.input > 0 || p.output > 0) ? p : null;
+};
+const costOf = (model, promptTok, outTok) => {
+  const p = priceOf(model);
+  return p ? (promptTok / 1e6) * p.input + (outTok / 1e6) * p.output : null;
+};
+
 function statChips(r, think) {
   const chips = [
     el("span", { class: "chip accent" }, icon("cube"), SERVER_LABEL[r.server] || r.server || "?"),
@@ -359,6 +373,12 @@ function statChips(r, think) {
   if (u) {
     chips.push(el("span", { class: "chip", title: "prompt / completion 토큰" }, `${u.prompt_tokens} → ${u.completion_tokens} tok`));
     if (u.completion_tokens_details) chips.push(el("span", { class: "chip" }, `reasoning ${u.completion_tokens_details.reasoning_tokens} tok`));
+  }
+  const model = settingsForm.elements.model.value.trim();
+  const c = u ? costOf(model, u.prompt_tokens, u.completion_tokens) : null;
+  if (c != null) {
+    const p = priceOf(model);
+    chips.push(el("span", { class: "chip", title: `환산 비용 (100만 토큰당 입력 $${p.input} · 출력 $${p.output})` }, usd(c)));
   }
   if (r.finish && r.finish !== "stop") chips.push(el("span", { class: "chip fail" }, "finish=" + r.finish));
   return chips;
@@ -979,12 +999,29 @@ function renderHistory() {
   const pick = (x) => (!model || x.model === model) && (!source || x.source === source);
   const turns = histRecords.filter((x) => x.type === "turn" && pick(x));
   const scen = histRecords.filter((x) => x.type === "scenario" && pick(x));
+  const benches = histRecords.filter((x) => x.type === "bench" && pick(x));
   const ok = turns.filter((t) => !t.error);
+
+  // 모델별 토큰 합계 (대화·시나리오 턴 + 부하 테스트)
+  const usage = new Map();
+  const addUse = (m, pIn, pOut, n) => {
+    const u = usage.get(m) || { in: 0, out: 0, calls: 0 };
+    u.in += pIn; u.out += pOut; u.calls += n;
+    usage.set(m, u);
+  };
+  for (const t of turns) if (t.usage) addUse(t.model, t.usage.prompt_tokens, t.usage.completion_tokens, 1);
+  for (const b of benches) for (const l of b.levels) addUse(b.model, l.prompt_tokens || 0, l.completion_tokens || 0, l.ok);
+  let tokIn = 0, tokOut = 0, cost = 0, unpriced = 0;
+  for (const [m, u] of usage) {
+    tokIn += u.in; tokOut += u.out;
+    const c = costOf(m, u.in, u.out);
+    if (c == null) unpriced += u.in + u.out; else cost += c;
+  }
   const checks = scen.reduce((a, s) => a + s.checks, 0);
   const passed = scen.reduce((a, s) => a + s.checks - s.fails, 0);
   const tile = (label, value, cls) => el("div", { class: "tile" }, el("small", { text: label }), el("b", { class: cls || null, text: value }));
   const body = $("#histBody");
-  if (!turns.length && !scen.length) {
+  if (!turns.length && !scen.length && !benches.length) {
     body.replaceChildren(el("div", { class: "dtable-wrap" }, el("p", { class: "empty-note", text: "이 기간에 기록이 없습니다. 대화나 시나리오를 실행하면 쌓입니다." })));
     return;
   }
@@ -993,7 +1030,29 @@ function renderHistory() {
     tile("LLM 호출", `${turns.length.toLocaleString()}회${turns.length - ok.length ? ` · 오류 ${turns.length - ok.length}` : ""}`),
     tile("시나리오 실행", `${scen.length.toLocaleString()}회`),
     tile("검사 통과율", checks ? `${Math.round((passed / checks) * 100)}%` : "-", checks ? (passed === checks ? "pass" : "fail") : ""),
-    tile("평균 TTFT", fmtAvgSec(avg(ok.filter((t) => t.ttft_ms).map((t) => t.ttft_ms)))));
+    tile("평균 TTFT", fmtAvgSec(avg(ok.filter((t) => t.ttft_ms).map((t) => t.ttft_ms)))),
+    tile("토큰 (입력 → 출력)", `${fmtNum(tokIn)} → ${fmtNum(tokOut)}`),
+    tile("환산 비용", usage.size && unpriced < tokIn + tokOut ? usd(cost) + (unpriced ? " + 단가 미설정" : "") : "단가 미설정", "accent"));
+
+  // 모델별 토큰·비용과 단가 입력 (단가는 저장 버튼으로 .env.toml 에 남는다)
+  const priceRows = [...usage.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([m, u]) => {
+    const p = prices[m] || { input: 0, output: 0 };
+    const inp = el("input", { type: "number", min: "0", step: "0.01", value: p.input || "", placeholder: "0", "aria-label": `${m} 입력 단가` });
+    const outp = el("input", { type: "number", min: "0", step: "0.01", value: p.output || "", placeholder: "0", "aria-label": `${m} 출력 단가` });
+    const c = costOf(m, u.in, u.out);
+    const save = el("button", { type: "button", class: "code-btn", title: "단가 저장" }, icon("floppy-disk"), "저장");
+    save.addEventListener("click", async () => {
+      try {
+        prices = await api("/api/prices", { model: m, input: Number(inp.value || 0), output: Number(outp.value || 0) });
+        renderHistory();
+      } catch (e) { flash(save, false, "실패"); }
+    });
+    return el("tr", {},
+      el("td", { text: m }), el("td", { class: "num", text: u.calls.toLocaleString() }),
+      el("td", { class: "num", text: fmtNum(u.in) }), el("td", { class: "num", text: fmtNum(u.out) }),
+      el("td", { class: "price-cell" }, el("span", { text: "$" }), inp), el("td", { class: "price-cell" }, el("span", { text: "$" }), outp),
+      el("td", { class: "num", text: c == null ? "단가 미설정" : usd(c) }), el("td", {}, save));
+  });
 
   // 모델·thinking 별 호출 비교
   const groups = new Map();
@@ -1069,6 +1128,9 @@ function renderHistory() {
   body.replaceChildren(tiles,
     el("div", { class: "section-title" }, icon("chart-bar"), "모델 · thinking 별 호출 비교"),
     table([["모델"], ["thinking"], ["호출", "num"], ["평균 소요", "num"], ["평균 TTFT", "num"], ["평균 completion tok", "num"], ["평균 추론자", "num"], ["오류", "num"]], cmpRows),
+    el("div", { class: "section-title" }, icon("cube"), "모델별 토큰 · 환산 비용 (단가는 100만 토큰당 USD, 부하 테스트 포함)"),
+    table([["모델"], ["호출", "num"], ["입력 tok", "num"], ["출력 tok", "num"], ["입력 단가"], ["출력 단가"], ["환산 비용", "num"], [""]], priceRows),
+    el("p", { class: "path", text: "온프렘 모델은 실제 청구액이 없습니다. 비교할 상용 API 의 단가를 넣으면 그 단가로 환산합니다. 추론 토큰은 출력에 들어갑니다." }),
     el("div", { class: "section-title" }, icon("list-checks"), "시나리오 통과율"),
     scRows.length ? table([["모델"], ["thinking"], ["실행", "num"], ["검사 통과율"], ["턴 평균", "num"]], scRows)
       : el("div", { class: "dtable-wrap" }, el("p", { class: "empty-note", text: "시나리오 기록이 없습니다." })),

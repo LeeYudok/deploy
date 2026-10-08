@@ -155,6 +155,7 @@ func main() {
 		fail("모델명 없음. .env.toml 의 model 을 설정하세요")
 	}
 
+	cliPrice = pricesFrom(cfg)[*model]
 	if !*noRecord && !*models {
 		cliRuns = newRunStore(runsDir(), nil)
 		cliSession = newSession()
@@ -204,6 +205,7 @@ func main() {
 var (
 	cliRuns    *runStore
 	cliSession string
+	cliPrice   Price // 이 모델의 단가 ([price."<모델>"]). 없으면 비용을 안 보인다
 )
 
 func recordTurn(opt Options, think string, msgs []Message, r Result, err error, scenario string, turn int) {
@@ -258,6 +260,9 @@ func printStats(r Result) {
 		parts = append(parts, fmt.Sprintf("첫토큰 %s", r.TTFT.Round(time.Millisecond)))
 	}
 	parts = append(parts, fmt.Sprintf("추론 %d자", len([]rune(r.Reasoning))))
+	if cliPrice.set() && r.Usage != nil {
+		parts = append(parts, "환산 "+fmtUSD(cliPrice.cost(r.Usage)))
+	}
 	if strings.TrimSpace(r.Content) == "" {
 		// 모델이 추론 안에서 답을 끝내고 본문을 비우는 경우가 있다.
 		parts = append(parts, "본문 없음")
