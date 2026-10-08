@@ -13,6 +13,7 @@
   --accent-2: #9b6bff;
   --accent-soft: rgba(107, 77, 255, 0.09);
   --accent-ring: rgba(107, 77, 255, 0.28);
+  --shine: #e9b8ff;
   --on-accent: #ffffff;
   --user-bubble: #ece8ff;
   --pass: #0f9f6e;
@@ -44,6 +45,7 @@
     --accent-2: #b48cff;
     --accent-soft: rgba(143, 120, 255, 0.13);
     --accent-ring: rgba(143, 120, 255, 0.35);
+    --shine: #ffffff;
     --on-accent: #0b0b0f;
     --user-bubble: #262140;
     --pass: #3ccf91;
@@ -71,6 +73,7 @@
   --accent-2: #b48cff;
   --accent-soft: rgba(143, 120, 255, 0.13);
   --accent-ring: rgba(143, 120, 255, 0.35);
+  --shine: #ffffff;
   --on-accent: #0b0b0f;
   --user-bubble: #262140;
   --pass: #3ccf91;
@@ -173,7 +176,27 @@ button:focus-visible, .segmented label:focus-within { outline: 2px solid var(--a
 .hint { margin: 8px 0 0; font-size: 12px; color: var(--muted); }
 .hint .ok { color: var(--pass); }
 .hint .err { color: var(--fail); }
-.credit { margin: 10px 0 0; font-size: 11px; color: var(--muted); letter-spacing: .02em; opacity: .8; }
+/* made by doksam: 글자 위로 빛이 지나가고 양옆의 작은 별이 번갈아 반짝인다 */
+.credit { margin: 14px 0 0; font-size: 12px; line-height: 1; }
+.credit-text {
+  position: relative; display: inline-block; padding: 4px 16px 4px 2px;
+  font-weight: 600; letter-spacing: .06em;
+  background: linear-gradient(110deg, var(--muted) 0%, var(--muted) 30%, var(--accent) 42%, var(--shine) 50%, var(--accent-2) 58%, var(--muted) 70%, var(--muted) 100%);
+  background-size: 300% 100%;
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+  animation: credit-shine 3.6s ease-in-out infinite;
+}
+.credit-text::before, .credit-text::after {
+  content: ""; position: absolute; width: 12px; height: 12px;
+  background: linear-gradient(135deg, var(--shine), var(--accent-2));
+  clip-path: polygon(50% 0, 62% 38%, 100% 50%, 62% 62%, 50% 100%, 38% 62%, 0 50%, 38% 38%);
+  filter: drop-shadow(0 0 4px var(--accent-2));
+  animation: credit-twinkle 1.8s ease-in-out infinite;
+}
+.credit-text::before { right: 0; top: -6px; }
+.credit-text::after { right: -10px; top: 8px; width: 8px; height: 8px; animation-delay: .9s; }
+@keyframes credit-shine { 0% { background-position: 100% 0; } 60%, 100% { background-position: 0 0; } }
+@keyframes credit-twinkle { 0%, 100% { opacity: 0; transform: scale(.3) rotate(0deg); } 50% { opacity: 1; transform: scale(1) rotate(45deg); } }
 .path { margin: 4px 0 0; font-family: var(--mono); font-size: 11px; color: var(--muted); word-break: break-all; }
 
 /* ---- 버튼 ---- */
