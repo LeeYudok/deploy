@@ -52,9 +52,10 @@ think = ""             # 고르면 thinking 도 이 값으로
 | 대화형 멀티턴 | `llmtest.exe -chat` | `python llmtest.py -chat` |
 | 시나리오 멀티턴 | `llmtest.exe -scenario ..\..\scenarios` | `python llmtest.py -scenario ..\scenarios` |
 | 모델 목록 | `llmtest.exe -models` | `python llmtest.py -models` |
+| 부하 테스트 | `llmtest.exe -bench 1,2,4,8` | `python llmtest.py -bench 1,2,4,8` |
 | 웹 UI | `llmtest.exe -web` (또는 `llmtest-web.bat` 더블클릭) | - |
 
-공통 플래그: `-server auto|sglang|vllm|ollama|openai`, `-stream`, `-think on|off|auto`, `-effort none|low|medium|high`, `-hide-think`, `-sys`, `-t`, `-max`, `-timeout`.
+공통 플래그: `-preset <id>`, `-server auto|sglang|vllm|ollama|openai`, `-stream`, `-think on|off|auto`, `-effort none|low|medium|high`, `-hide-think`, `-sys`, `-t`, `-max`, `-timeout`, `-no-record`, `-runs <폴더>`, `-bench-requests <n>`.
 우선순위: **플래그 > 환경변수 > .env.toml**.
 
 ### 웹 UI (`-web`, Go 만)
@@ -167,6 +168,7 @@ llmtest.exe -bench 1,2,4,8,16 -bench-requests 16 -max 128 -think off -p "다섯 
 - 요청은 Go 서버가 보낸다. 브라우저는 같은 호스트로 여는 연결 수가 제한돼 있어서 브라우저로는 동시 수를 높일 수 없다.
 - 요청마다 프롬프트 끝에 번호를 붙여 응답 캐시 효과를 줄인다. 시스템 프롬프트 같은 공통 앞부분은 서버의 prefix 캐시가 그대로 쓴다.
 - `-bench-requests` 를 비우면 수준마다 수준의 2배를 보낸다. 동시 수는 1~128.
+- Python 판도 같은 표와 기록을 낸다 (표준 라이브러리 스레드). Ctrl+C 로 멈추면 끝난 수준까지 `stopped: true` 로 남긴다.
 - 결과는 실행 기록에 `type: "bench"` 로 남는다.
 - 공유 서버에 부하가 간다. 작게 시작한다.
 
@@ -244,7 +246,7 @@ thinking 을 켜고 끄는 요청 필드가 서버마다 다르다. `-server aut
 | `scenario` | 시나리오 이름, 모델, thinking 강제값(`scenario` 면 시나리오 값), 턴·완료·검사·실패 수, 중지 여부, 소요, 턴별 검사 결과 |
 
 - 중지한 턴은 남기지 않는다. 호출 오류는 남긴다.
-- CLI 는 `-no-record` 로 끄고, `-runs <폴더>` 로 기록 폴더를 바꾼다 (웹 UI 도 같음). (Python 클라이언트는 아직 기록하지 않는다.)
+- CLI 는 `-no-record` 로 끄고, `-runs <폴더>` 로 기록 폴더를 바꾼다 (웹 UI 도 같음). Python 클라이언트도 같은 폴더·형식으로 남긴다 (`source: "cli"`).
 - SQLite 대신 JSONL 을 쓴다: 표준 라이브러리만으로 되어 폐쇄망 빌드가 그대로다. 기록을 읽는 데 300ms, 쓰는 데 50ms 를 넘기면 로그 탭과 터미널에 `WARN runs 기록 읽기 느림 …` 이 찍힌다. 이 경고가 잦아지면 SQLite 로 옮길 때다.
 - `jq` 로도 바로 볼 수 있다: `jq -r 'select(.type=="turn") | [.time,.model,.think,.elapsed_ms] | @tsv' runs/*.jsonl`
 
