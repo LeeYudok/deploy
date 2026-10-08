@@ -378,7 +378,7 @@ func runScenarios(ctx context.Context, opt Options, hideThink bool, spec, defaul
 			if err != nil {
 				left := 0
 				for _, x := range sc.Turns[i:] {
-					if len(x.Expect) > 0 {
+					if x.checked() {
 						left++
 					}
 				}
@@ -396,15 +396,16 @@ func runScenarios(ctx context.Context, opt Options, hideThink bool, spec, defaul
 			rw.elapsed += r.Elapsed
 			rw.done++
 			history = append(history, Message{Role: "assistant", Content: r.Content})
-			if len(t.Expect) > 0 {
+			if t.checked() {
 				miss := checkExpect(r.Content, t.Expect)
+				found := checkReject(r.Content, t.Reject)
 				rw.checks++
-				rw.results = append(rw.results, CheckResult{Turn: i + 1, Expect: t.Expect, Missing: miss})
-				if len(miss) > 0 {
+				rw.results = append(rw.results, CheckResult{Turn: i + 1, Expect: t.Expect, Missing: miss, Reject: t.Reject, Found: found})
+				if len(miss) > 0 || len(found) > 0 {
 					rw.fails++
-					fmt.Printf("CHECK: FAIL (없음: %s)\n", strings.Join(miss, ", "))
+					fmt.Printf("CHECK: FAIL (%s)\n", checkFailText(miss, found))
 				} else {
-					fmt.Printf("CHECK: PASS (%s)\n", strings.Join(t.Expect, ", "))
+					fmt.Printf("CHECK: PASS (%s)\n", checkPassText(t))
 				}
 			}
 		}
@@ -438,6 +439,28 @@ func runScenarios(ctx context.Context, opt Options, hideThink bool, spec, defaul
 		fmt.Println(line)
 	}
 	return totalFails, nil
+}
+
+func checkFailText(miss, found []string) string {
+	var parts []string
+	if len(miss) > 0 {
+		parts = append(parts, "없음: "+strings.Join(miss, ", "))
+	}
+	if len(found) > 0 {
+		parts = append(parts, "금지: "+strings.Join(found, ", "))
+	}
+	return strings.Join(parts, " / ")
+}
+
+func checkPassText(t Turn) string {
+	s := strings.Join(t.Expect, ", ")
+	if len(t.Reject) > 0 {
+		if s != "" {
+			s += " / "
+		}
+		s += "금지 " + strconv.Itoa(len(t.Reject)) + "개 없음"
+	}
+	return s
 }
 
 // runBenchCLI 는 부하 테스트를 돌리고 수준별 표를 출력한다.

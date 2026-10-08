@@ -126,6 +126,9 @@ test("시나리오 실행과 요약", async () => {
   await expect(tiles.nth(1)).toContainText("1 / 2");
   await expect(page.locator(".board-row", { hasText: "e2e-memory" })).toContainText("PASS");
   await expect(page.locator(".board-row", { hasText: "e2e-fail" })).toContainText("FAIL 1");
+  // reject: 답변에 있으면 실패, 없으면 통과 칩에 개수를 보인다
+  await expect(page.locator(".chip.fail", { hasText: "금지: pong" })).toBeVisible();
+  await expect(page.locator(".chip.pass", { hasText: "금지 1개 없음" })).toHaveCount(1);
 });
 
 test("프리셋 전환과 연결 실패 표시", async () => {

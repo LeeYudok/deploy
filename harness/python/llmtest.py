@@ -567,6 +567,31 @@ def check_expect(answer, expect):
     return [e for e in expect if not any(alt.strip().lower() in low for alt in e.split("|"))]
 
 
+def code_text(answer):
+    """답변의 코드 펜스 안 줄만 이어 붙인다. 펜스가 없으면 답변 전체다. 닫히지 않은 펜스는 끝까지 코드로 본다."""
+    out, inside, fenced = [], False, False
+    for line in answer.split("\n"):
+        if line.strip().startswith("```"):
+            inside, fenced = not inside, True
+            continue
+        if inside:
+            out.append(line)
+    return "\n".join(out) if fenced else answer
+
+
+def check_reject(answer, reject):
+    """답변 코드에 금지 문자열이 있는지 본다 (대소문자 무시, "a|b" 는 둘 중 하나라도 있으면).
+
+    코드 펜스가 있으면 펜스 안만 본다. 설명문에 "console.log 를 지웠다" 고 쓴 것은 걸리지 않는다.
+    """
+    low = code_text(answer).lower()
+    return [e for e in reject if any(a.strip().lower() and a.strip().lower() in low for a in e.split("|"))]
+
+
+def has_check(t):
+    return bool(t.get("expect") or t.get("reject"))
+
+
 def run_scenarios(cli, spec, default_system, default_think):
     rows = []
     total_fails = 0
@@ -589,7 +614,7 @@ def run_scenarios(cli, spec, default_system, default_think):
                 r = cli.call(history, think, name, i + 1)
             except Exception as e:  # noqa: BLE001 - 나머지 시나리오는 계속 돌린다
                 # 남은 검사를 실패로 센다. 검사가 남지 않았어도 호출 오류는 실패 1로 센다
-                left = sum(1 for x in turns[i:] if x.get("expect")) or 1
+                left = sum(1 for x in turns[i:] if has_check(x)) or 1
                 row["checks"] += left
                 row["fails"] += left
                 row["results"].append({"turn": i + 1, "expect": None, "missing": ["(호출 오류)"]})
@@ -601,18 +626,26 @@ def run_scenarios(cli, spec, default_system, default_think):
             row["done"] += 1
             history.append({"role": "assistant", "content": r["content"]})
             expect = t.get("expect") or []
-            if expect:
+            reject = t.get("reject") or []
+            if expect or reject:
                 miss = check_expect(r["content"], expect)
+                found = check_reject(r["content"], reject)
                 row["checks"] += 1
-                res = {"turn": i + 1, "expect": expect}
-                if miss:
-                    res["missing"] = miss
-                row["results"].append(res)
-                if miss:
+                res = {"turn": i + 1, "expect": expect or None, "missing": miss, "reject": reject, "found": found}
+                row["results"].append(drop_empty(res, ("missing", "reject", "found")))
+                if miss or found:
                     row["fails"] += 1
-                    print("CHECK: FAIL (없음: %s)" % ", ".join(miss))
+                    parts = []
+                    if miss:
+                        parts.append("없음: " + ", ".join(miss))
+                    if found:
+                        parts.append("금지: " + ", ".join(found))
+                    print("CHECK: FAIL (%s)" % " / ".join(parts))
                 else:
-                    print("CHECK: PASS (%s)" % ", ".join(expect))
+                    parts = [", ".join(expect)] if expect else []
+                    if reject:
+                        parts.append("금지 %d개 없음" % len(reject))
+                    print("CHECK: PASS (%s)" % " / ".join(parts))
         total_fails += row["fails"]
         rows.append(row)
         rec = {

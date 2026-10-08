@@ -618,7 +618,7 @@ async function loadScenarios() {
       el("span", { class: "inner" },
         el("strong", { text: s.name }),
         lang ? el("span", { class: "chip lang", text: lang }) : null,
-        el("small", { text: `${s.turns.length}턴 · 검사 ${s.turns.filter((t) => t.expect?.length).length}개${s.think ? " · think=" + s.think : ""}` })),
+        el("small", { text: `${s.turns.length}턴 · 검사 ${s.turns.filter(hasCheck).length}개${s.think ? " · think=" + s.think : ""}` })),
       el("span", { class: "tick" }, icon("check")));
   }));
   for (const e of data.errors) list.append(el("p", { class: "error-box", text: e }));
@@ -634,6 +634,44 @@ $("#scAll").addEventListener("click", () => {
 function checkExpect(answer, expect) {
   const low = answer.toLowerCase();
   return (expect || []).filter((e) => !e.split("|").some((alt) => low.includes(alt.trim().toLowerCase())));
+}
+
+// checkReject 는 답변 코드에 금지 문자열이 있는지 본다. 코드 펜스가 있으면 펜스 안만 본다. Go 쪽과 같은 규칙.
+function checkReject(answer, reject) {
+  const low = codeText(answer).toLowerCase();
+  return (reject || []).filter((e) => e.split("|").some((alt) => {
+    const a = alt.trim().toLowerCase();
+    return a && low.includes(a);
+  }));
+}
+
+function codeText(answer) {
+  const out = [];
+  let inside = false, fenced = false;
+  for (const line of answer.split("\n")) {
+    if (line.trim().startsWith("```")) {
+      inside = !inside;
+      fenced = true;
+      continue;
+    }
+    if (inside) out.push(line);
+  }
+  return fenced ? out.join("\n") : answer;
+}
+
+const hasCheck = (t) => Boolean(t.expect?.length || t.reject?.length);
+
+function checkChipText(t, miss, found) {
+  if (!miss.length && !found.length) {
+    const parts = [];
+    if (t.expect?.length) parts.push(t.expect.join(", "));
+    if (t.reject?.length) parts.push(`금지 ${t.reject.length}개 없음`);
+    return `PASS ${parts.join(" / ")}`;
+  }
+  const parts = [];
+  if (miss.length) parts.push(`없음: ${miss.join(", ")}`);
+  if (found.length) parts.push(`금지: ${found.join(", ")}`);
+  return parts.join(" / ");
 }
 
 function renderSummary(rows) {
@@ -677,7 +715,7 @@ $("#scRun").addEventListener("click", async () => {
   const log = $("#scLog");
   log.replaceChildren();
   const rows = picked.map((s) => ({
-    name: s.name, turns: s.turns.length, checks: s.turns.filter((t) => t.expect?.length).length,
+    name: s.name, turns: s.turns.length, checks: s.turns.filter(hasCheck).length,
     done: 0, checked: 0, fails: 0, elapsed: 0, note: "", running: true, stopped: false,
     started: false, server: "", results: [],
   }));
@@ -717,7 +755,7 @@ $("#scRun").addEventListener("click", async () => {
             throw err;
           }
           // 호출 오류는 남은 검사까지 실패로 센다.
-          const left = s.turns.slice(ti).filter((x) => x.expect?.length).length || 1;
+          const left = s.turns.slice(ti).filter(hasCheck).length || 1;
           row.checked += left;
           row.fails += left;
           row.note = err.message;
@@ -728,14 +766,17 @@ $("#scRun").addEventListener("click", async () => {
         row.done++;
         row.elapsed += r.elapsed_ms;
         row.server = r.server;
-        if (t.expect?.length) {
+        if (hasCheck(t)) {
           const miss = checkExpect(r.content, t.expect);
+          const found = checkReject(r.content, t.reject);
+          const failed = miss.length > 0 || found.length > 0;
           row.checked++;
-          row.results.push({ turn: ti + 1, expect: t.expect, missing: miss });
-          if (miss.length) row.fails++;
-          view.meta.prepend(el("span", { class: "chip " + (miss.length ? "fail" : "pass") },
-            icon(miss.length ? "x-circle" : "check-circle"),
-            miss.length ? `없음: ${miss.join(", ")}` : `PASS ${t.expect.join(", ")}`));
+          const res = { turn: ti + 1, expect: t.expect || [], missing: miss };
+          if (t.reject?.length) Object.assign(res, { reject: t.reject, found });
+          row.results.push(res);
+          if (failed) row.fails++;
+          view.meta.prepend(el("span", { class: "chip " + (failed ? "fail" : "pass") },
+            icon(failed ? "x-circle" : "check-circle"), checkChipText(t, miss, found)));
         }
         renderSummary(rows);
       }
