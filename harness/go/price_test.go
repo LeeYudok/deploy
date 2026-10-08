@@ -36,3 +36,32 @@ func TestPriceCost(t *testing.T) {
 		t.Fatal("format")
 	}
 }
+
+func TestMatchOpenRouter(t *testing.T) {
+	list, err := parseOpenRouter([]byte(`{"data":[
+		{"id":"qwen/qwen3.8-27b","name":"Qwen3.8 27B","pricing":{"prompt":"0.000000425","completion":"0.00000255"}},
+		{"id":"qwen/qwen3.8-flash","name":"Qwen3.8 Flash","pricing":{"prompt":"0.00000015","completion":"0.00000047"}},
+		{"id":"deepseek/deepseek-v4-flash-0731:batch","name":"batch","pricing":{"prompt":"0.00000001","completion":"0.0000005"}},
+		{"id":"deepseek/deepseek-v4-flash-0731","name":"DeepSeek V4 Flash 0731","pricing":{"prompt":"0.000000018","completion":"0.00000128"}},
+		{"id":"openrouter/auto","name":"Auto","pricing":{"prompt":"-1","completion":"-1"}}]}`))
+	if err != nil || len(list) != 4 {
+		t.Fatalf("parse: %v %d", err, len(list))
+	}
+	cases := map[string]string{
+		"RedHatAI/Qwen3.8-27B-INT4": "qwen/qwen3.8-27b", // 조직 접두어·양자화 꼬리표를 떼고 맞춘다
+		"Qwen/Qwen3.8-27B-AWQ":      "qwen/qwen3.8-27b",
+		"deepseek-v4-flash-0731":    "deepseek/deepseek-v4-flash-0731", // :batch 보다 변형 없는 id
+	}
+	for model, want := range cases {
+		m, ok := matchOpenRouter(model, list)
+		if !ok || m.ID != want {
+			t.Fatalf("%s: got %q %v, want %q", model, m.ID, ok, want)
+		}
+	}
+	if m, _ := matchOpenRouter("RedHatAI/Qwen3.8-27B-INT4", list); m.Input != 0.425 || m.Output != 2.55 {
+		t.Fatalf("price per 1M: %+v", m)
+	}
+	if _, ok := matchOpenRouter("mock-model", list); ok {
+		t.Fatal("mock-model should not match")
+	}
+}

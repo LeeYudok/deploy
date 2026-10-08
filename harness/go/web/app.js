@@ -1034,6 +1034,29 @@ function renderHistory() {
     tile("토큰 (입력 → 출력)", `${fmtNum(tokIn)} → ${fmtNum(tokOut)}`),
     tile("환산 비용", usage.size && unpriced < tokIn + tokOut ? usd(cost) + (unpriced ? " + 단가 미설정" : "") : "단가 미설정", "accent"));
 
+  // OpenRouter 공개 단가로 채운다 (인터넷 필요). 기록에 나온 모델과 프리셋 모델을 함께 맞춘다.
+  const orNote = el("p", { class: "path", hidden: true });
+  const orBtn = el("button", { type: "button", class: "btn ghost", title: "openrouter.ai 의 공개 모델 목록에서 같은 모델의 단가를 가져와 저장합니다" }, icon("arrows-clockwise"), "OpenRouter 기준으로 채우기");
+  orBtn.addEventListener("click", async () => {
+    const models = [...new Set([...usage.keys(), ...presets.map((p) => p.model), settingsForm.elements.model.value.trim()].filter(Boolean))];
+    orBtn.disabled = true;
+    try {
+      const r = await api("/api/prices/openrouter", { models });
+      prices = r.prices;
+      renderHistory();
+      const done = Object.entries(r.matched).map(([m, o]) => `${m} → ${o.id} ($${o.input} / $${o.output})`);
+      const note = $("#histBody .or-note");
+      note.hidden = false;
+      note.textContent = `OpenRouter 모델 ${r.fetched}개에서 맞춤: ${done.join(", ") || "없음"}${r.unmatched.length ? ` · 못 찾음: ${r.unmatched.join(", ")}` : ""}`;
+    } catch (e) {
+      orNote.hidden = false;
+      orNote.className = "error-box";
+      orNote.textContent = e.message + " — 폐쇄망이면 인터넷 되는 PC 에서 채운 .env.toml 의 [price] 섹션을 옮기세요.";
+      orBtn.disabled = false;
+    }
+  });
+  orNote.classList.add("or-note");
+
   // 모델별 토큰·비용과 단가 입력 (단가는 저장 버튼으로 .env.toml 에 남는다)
   const priceRows = [...usage.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([m, u]) => {
     const p = prices[m] || { input: 0, output: 0 };
@@ -1043,12 +1066,15 @@ function renderHistory() {
     const save = el("button", { type: "button", class: "code-btn", title: "단가 저장" }, icon("floppy-disk"), "저장");
     save.addEventListener("click", async () => {
       try {
+        // 손으로 고치면 출처는 "직접 입력"이 된다
         prices = await api("/api/prices", { model: m, input: Number(inp.value || 0), output: Number(outp.value || 0) });
         renderHistory();
       } catch (e) { flash(save, false, "실패"); }
     });
+    const src = p.source ? p.source.replace(/^openrouter:/, "OpenRouter · ") : "직접 입력";
     return el("tr", {},
-      el("td", { text: m }), el("td", { class: "num", text: u.calls.toLocaleString() }),
+      el("td", {}, el("div", { text: m }), p.input || p.output ? el("small", { class: "muted-note", text: src }) : null),
+      el("td", { class: "num", text: u.calls.toLocaleString() }),
       el("td", { class: "num", text: fmtNum(u.in) }), el("td", { class: "num", text: fmtNum(u.out) }),
       el("td", { class: "price-cell" }, el("span", { text: "$" }), inp), el("td", { class: "price-cell" }, el("span", { text: "$" }), outp),
       el("td", { class: "num", text: c == null ? "단가 미설정" : usd(c) }), el("td", {}, save));
@@ -1128,7 +1154,8 @@ function renderHistory() {
   body.replaceChildren(tiles,
     el("div", { class: "section-title" }, icon("chart-bar"), "모델 · thinking 별 호출 비교"),
     table([["모델"], ["thinking"], ["호출", "num"], ["평균 소요", "num"], ["평균 TTFT", "num"], ["평균 completion tok", "num"], ["평균 추론자", "num"], ["오류", "num"]], cmpRows),
-    el("div", { class: "section-title" }, icon("cube"), "모델별 토큰 · 환산 비용 (단가는 100만 토큰당 USD, 부하 테스트 포함)"),
+    el("div", { class: "section-title" }, icon("cube"), "모델별 토큰 · 환산 비용 (단가는 100만 토큰당 USD, 부하 테스트 포함)", el("span", { class: "spacer" }), orBtn),
+    orNote,
     table([["모델"], ["호출", "num"], ["입력 tok", "num"], ["출력 tok", "num"], ["입력 단가"], ["출력 단가"], ["환산 비용", "num"], [""]], priceRows),
     el("p", { class: "path", text: "온프렘 모델은 실제 청구액이 없습니다. 비교할 상용 API 의 단가를 넣으면 그 단가로 환산합니다. 추론 토큰은 출력에 들어갑니다." }),
     el("div", { class: "section-title" }, icon("list-checks"), "시나리오 통과율"),

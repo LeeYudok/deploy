@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"mime"
 	"net"
@@ -83,6 +84,7 @@ func runWeb(addr string, open bool, cfgPath string, cfg map[string]string, s Set
 	mux.HandleFunc("/api/runs/scenario", ws.handleRunScenario)
 	mux.HandleFunc("/api/bench", ws.handleBench)
 	mux.HandleFunc("/api/prices", ws.handlePrices)
+	mux.HandleFunc("/api/prices/openrouter", ws.handleOpenRouterPrices)
 
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
@@ -632,4 +634,70 @@ func (ws *webServer) handlePrices(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, ws.prices)
+}
+
+// handleOpenRouterPrices 는 OpenRouter 공개 모델 목록에서 같은 모델의 단가를 찾아 저장한다 (issue #18).
+// 인터넷이 필요하다. 폐쇄망에서는 인터넷 되는 PC 에서 채운 [price] 섹션을 옮긴다.
+func (ws *webServer) handleOpenRouterPrices(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	var in struct {
+		Models []string `json:"models"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, openRouterModels, nil)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	resp, err := ws.client.Do(req)
+	if err != nil {
+		writeErr(w, http.StatusBadGateway, fmt.Errorf("OpenRouter 에 연결하지 못했습니다 (인터넷 필요): %v", err))
+		return
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 32<<20))
+	if err != nil || resp.StatusCode != http.StatusOK {
+		writeErr(w, http.StatusBadGateway, fmt.Errorf("OpenRouter 응답 오류: HTTP %d %v", resp.StatusCode, err))
+		return
+	}
+	list, err := parseOpenRouter(body)
+	if err != nil {
+		writeErr(w, http.StatusBadGateway, err)
+		return
+	}
+	matched := map[string]ORModel{}
+	unmatched := []string{}
+	ws.mu.Lock()
+	defer ws.mu.Unlock()
+	for _, model := range in.Models {
+		m, ok := matchOpenRouter(model, list)
+		if !ok {
+			unmatched = append(unmatched, model)
+			continue
+		}
+		matched[model] = m
+		ws.prices[model] = Price{Input: m.Input, Output: m.Output, Source: "openrouter:" + m.ID}
+	}
+	if len(matched) > 0 {
+		llm := map[string]string{}
+		for k, v := range ws.cfg {
+			if rest, ok := strings.CutPrefix(k, "llm."); ok {
+				llm[rest] = v
+			}
+		}
+		if err := saveToml(ws.cfgPath, llm, ws.presets, ws.prices); err != nil {
+			writeErr(w, http.StatusInternalServerError, err)
+			return
+		}
+	}
+	ws.logs.add("http", "info", fmt.Sprintf("OpenRouter 단가 · 모델 %d개 중 %d개 맞춤 · 목록 %d개", len(in.Models), len(matched), len(list)), "")
+	writeJSON(w, http.StatusOK, map[string]any{"matched": matched, "unmatched": unmatched, "prices": ws.prices, "fetched": len(list)})
 }
