@@ -77,6 +77,23 @@ type ScenarioRecord struct {
 	Results   []CheckResult `json:"results,omitempty"`
 }
 
+// BenchRecord 는 부하 테스트 한 번의 결과다.
+type BenchRecord struct {
+	Type      string       `json:"type"` // "bench"
+	Time      string       `json:"time"`
+	Source    string       `json:"source"`
+	BaseURL   string       `json:"base_url"`
+	Model     string       `json:"model"`
+	Server    string       `json:"server"`
+	Think     string       `json:"think"`
+	MaxTokens int          `json:"max_tokens"`
+	Prompt    string       `json:"prompt"`
+	Requests  int          `json:"requests"`
+	Levels    []BenchLevel `json:"levels"`
+	Recommend int          `json:"recommend"`
+	Stopped   bool         `json:"stopped,omitempty"`
+}
+
 // runStore 는 기록 폴더다. slow 가 있으면 느린 읽기·쓰기를 알린다.
 type runStore struct {
 	dir  string

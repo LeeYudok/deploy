@@ -80,6 +80,7 @@ func runWeb(addr string, open bool, cfgPath string, cfg map[string]string, s Set
 	mux.HandleFunc("/api/logs", ws.logs.handleLogs)
 	mux.HandleFunc("/api/runs", ws.handleRuns)
 	mux.HandleFunc("/api/runs/scenario", ws.handleRunScenario)
+	mux.HandleFunc("/api/bench", ws.handleBench)
 
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
@@ -494,4 +495,100 @@ func (ws *webServer) handleRunScenario(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// handleBench 는 부하 테스트를 돌리고 진행을 SSE 로 보낸다 (issue #17).
+// 이벤트: sample (요청 한 건), level (수준 요약), done ({levels, recommend}), error.
+func (ws *webServer) handleBench(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	var in struct {
+		connReq
+		Model       string  `json:"model"`
+		Server      string  `json:"server"`
+		Think       string  `json:"think"`
+		Effort      string  `json:"reasoning_effort"`
+		Temperature float64 `json:"temperature"`
+		MaxTokens   int     `json:"max_tokens"`
+		Levels      string  `json:"levels"`
+		Requests    int     `json:"requests"`
+		Prompt      string  `json:"prompt"`
+		System      string  `json:"system"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	levels, err := parseLevels(in.Levels)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	if strings.TrimSpace(in.Prompt) == "" {
+		writeErr(w, http.StatusBadRequest, errors.New("프롬프트를 입력하세요"))
+		return
+	}
+	if in.Requests < 0 || in.Requests > 1000 {
+		writeErr(w, http.StatusBadRequest, errors.New("수준당 요청 수는 0~1000"))
+		return
+	}
+	opt := ws.options(in.connReq)
+	opt.Model, opt.Temp, opt.MaxTokens, opt.Effort = in.Model, in.Temperature, in.MaxTokens, in.Effort
+	if opt.Base == "" || opt.Model == "" {
+		writeErr(w, http.StatusBadRequest, errors.New("접속주소와 모델명을 입력하세요"))
+		return
+	}
+	if opt.Server, err = normalizeServer(in.Server); err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	if opt.Server == ServerAuto {
+		opt.Server = ws.detect(r.Context(), opt)
+	}
+
+	flusher, _ := w.(http.Flusher)
+	w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	var mu sync.Mutex
+	send := func(event string, v any) {
+		b, _ := json.Marshal(v)
+		mu.Lock()
+		defer mu.Unlock()
+		fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, b)
+		if flusher != nil {
+			flusher.Flush()
+		}
+	}
+	ws.logs.add("bench", "info", fmt.Sprintf("부하 테스트 시작 · %s · 동시 %v · 수준당 요청 %d · max_tokens %d · think=%s", opt.Model, levels, in.Requests, opt.MaxTokens, in.Think), "")
+	cfg := BenchConfig{Levels: levels, Requests: in.Requests, Prompt: in.Prompt, System: in.System, Think: in.Think}
+	res, err := runBench(r.Context(), opt, cfg,
+		func(s BenchSample) { send("sample", s) },
+		func(b BenchLevel) {
+			level := "info"
+			if b.Errors > 0 {
+				level = "error"
+			}
+			ws.logs.add("bench", level, fmt.Sprintf("동시 %d · 요청 %d · 오류 %d · %.1f tok/s · p95 %dms · TTFT p95 %dms", b.Level, b.Requests, b.Errors, b.TokPerSec, b.LatP95ms, b.TTFTP95ms), b.FirstError)
+			send("level", b)
+		})
+	rec := recommendLevel(res)
+	stopped := errors.Is(err, context.Canceled)
+	if len(res) > 0 {
+		werr := ws.runs.append(BenchRecord{Type: "bench", Time: time.Now().Format(timeFmt), Source: "web-bench", BaseURL: opt.Base, Model: opt.Model,
+			Server: opt.Server, Think: in.Think, MaxTokens: opt.MaxTokens, Prompt: in.Prompt, Requests: in.Requests, Levels: res, Recommend: rec, Stopped: stopped})
+		if werr != nil {
+			ws.logs.add("runs", "error", "기록 쓰기 실패: "+werr.Error(), "")
+		}
+	}
+	if err != nil && !stopped {
+		send("error", err.Error())
+		return
+	}
+	if stopped {
+		return
+	}
+	ws.logs.add("bench", "info", fmt.Sprintf("부하 테스트 끝 · 권장 동시 수 %d", rec), "")
+	send("done", map[string]any{"levels": res, "recommend": rec, "server": opt.Server})
 }

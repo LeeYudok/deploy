@@ -748,6 +748,192 @@ $("#scRun").addEventListener("click", async () => {
 
 $("#scStop").addEventListener("click", () => scAbort?.abort());
 
+// ---- 부하 탭 ----
+
+const SVG_NS = "http://www.w3.org/2000/svg";
+function svgEl(tag, attrs = {}, text) {
+  const n = document.createElementNS(SVG_NS, tag);
+  for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
+  if (text != null) n.textContent = text;
+  return n;
+}
+
+// barChart 는 동시 수준별 막대 차트 하나를 그린다 (계열 하나, 축 하나).
+// 권장 수준은 막대 위에 "권장" 글자로, 오류가 난 수준은 "오류 N" 글자로 표시한다 (색만으로 구분하지 않는다).
+function barChart({ title, sub, unit, data, fmt }) {
+  const W = 520, H = 220, L = 46, R = 8, T = 22, B = 26;
+  const max = Math.max(1, ...data.map((d) => d.value));
+  const nice = (v) => { const p = 10 ** Math.floor(Math.log10(v)); return Math.ceil(v / p) * p; };
+  const top = nice(max);
+  const y = (v) => T + (H - T - B) * (1 - v / top);
+  const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": title });
+  const grid = svgEl("g", { class: "grid" });
+  const axis = svgEl("g", { class: "axis" });
+  for (const f of [0, 0.5, 1]) {
+    const v = top * f;
+    grid.append(svgEl("line", { x1: L, x2: W - R, y1: y(v), y2: y(v) }));
+    axis.append(svgEl("text", { x: L - 6, y: y(v) + 4, "text-anchor": "end" }, fmt(v)));
+  }
+  svg.append(grid, axis);
+  const slot = (W - L - R) / data.length;
+  const bw = Math.min(56, slot * 0.6);
+  const wrap = el("div", { class: "chart" }, el("h4", { text: title }), el("small", { text: sub }));
+  const tip = el("div", { class: "chart-tip", hidden: true });
+  data.forEach((d, i) => {
+    const cx = L + slot * i + slot / 2;
+    const h = Math.max(0, H - B - y(d.value));
+    const r = Math.min(4, h / 2);
+    // 아래는 기준선에 붙이고 위만 4px 둥글게
+    const x0 = cx - bw / 2, y0 = H - B - h;
+    const path = h > 0
+      ? `M${x0},${H - B} V${y0 + r} Q${x0},${y0} ${x0 + r},${y0} H${x0 + bw - r} Q${x0 + bw},${y0} ${x0 + bw},${y0 + r} V${H - B} Z`
+      : "";
+    const bar = svgEl("path", { class: "bar", d: path });
+    axis.append(svgEl("text", { x: cx, y: H - 8, "text-anchor": "middle" }, `${d.x}`));
+    svg.append(bar);
+    if (d.highlight) svg.append(svgEl("text", { class: "tag", x: cx, y: y0 - 6, "text-anchor": "middle" }, `권장 · ${fmt(d.value)}`));
+    else if (d.errors) svg.append(svgEl("text", { class: "err", x: cx, y: y0 - 6, "text-anchor": "middle" }, `오류 ${d.errors}`));
+    else svg.append(svgEl("text", { class: "val", x: cx, y: y0 - 6, "text-anchor": "middle" }, fmt(d.value)));
+    // 막대보다 넓은 투명 영역으로 hover
+    const hit = svgEl("rect", { class: "hit", x: L + slot * i, y: T, width: slot, height: H - T - B });
+    hit.addEventListener("mouseenter", () => {
+      bar.classList.add("hover");
+      tip.textContent = `동시 ${d.x} · ${fmt(d.value)} ${unit}${d.errors ? ` · 오류 ${d.errors}` : ""}`;
+      tip.hidden = false;
+      const box = svg.getBoundingClientRect();
+      const host = wrap.getBoundingClientRect();
+      tip.style.left = `${box.left - host.left + (cx / W) * box.width}px`;
+      tip.style.top = `${box.top - host.top + (y0 / H) * box.height}px`;
+    });
+    hit.addEventListener("mouseleave", () => { bar.classList.remove("hover"); tip.hidden = true; });
+    svg.append(hit);
+  });
+  wrap.append(svg, tip);
+  return wrap;
+}
+
+const ms = (v) => (v >= 10000 ? `${(v / 1000).toFixed(1)}s` : v >= 1000 ? `${(v / 1000).toFixed(2)}s` : `${Math.round(v)}ms`);
+
+function renderBench(state) {
+  const { plan, levels, live, recommend, done } = state;
+  const body = $("#benchBody");
+  const progress = el("div", { class: "bench-progress" }, ...plan.map((p) => {
+    const lv = levels.find((x) => x.level === p.level);
+    const cur = live[p.level] || { done: 0, errors: 0 };
+    const n = lv ? lv.requests : p.requests;
+    const finished = lv ? lv.ok + lv.errors : cur.done;
+    const errs = lv ? lv.errors : cur.errors;
+    const state2 = lv ? (lv.errors ? "fail" : "pass") : "";
+    return el("div", { class: "row" },
+      el("span", { text: `동시 ${p.level}` }),
+      el("div", { class: "bar " + state2 }, el("span", { style: `width:${n ? (finished / n) * 100 : 0}%` })),
+      el("span", { class: "num", text: `${finished}/${n}${errs ? ` · 오류 ${errs}` : ""}` }));
+  }));
+  const parts = [progress];
+  if (levels.length) {
+    const best = levels.reduce((a, b) => (b.tok_per_sec > a.tok_per_sec ? b : a), levels[0]);
+    const recLv = levels.find((l) => l.level === recommend);
+    const tile = (label, value, cls) => el("div", { class: "tile" }, el("small", { text: label }), el("b", { class: cls || null, text: value }));
+    if (done || recommend) {
+      parts.push(el("div", { class: "tiles" },
+        tile("권장 동시 수", recommend ? String(recommend) : "판단 불가", "accent"),
+        tile("최대 처리량", `${best.tok_per_sec.toFixed(1)} tok/s (동시 ${best.level})`),
+        tile("권장 수준 p95 지연", recLv ? ms(recLv.lat_p95_ms) : "-"),
+        tile("오류", `${levels.reduce((a, l) => a + l.errors, 0)}건`, levels.some((l) => l.errors) ? "fail" : "pass")));
+    }
+    const data = (key) => levels.map((l) => ({ x: l.level, value: l[key], errors: l.errors, highlight: done && l.level === recommend }));
+    parts.push(el("div", { class: "charts" },
+      barChart({ title: "출력 처리량", sub: "서버 전체가 1초에 내보낸 출력 토큰 (높을수록 좋음)", unit: "tok/s", data: data("tok_per_sec"), fmt: (v) => v >= 100 ? v.toFixed(0) : v.toFixed(1) }),
+      barChart({ title: "p95 지연", sub: "요청 95%가 이 시간 안에 끝남 (낮을수록 좋음)", unit: "", data: data("lat_p95_ms"), fmt: ms })));
+    const rows = levels.map((l) => el("tr", {},
+      el("td", { class: "num", text: String(l.level) }), el("td", { class: "num", text: String(l.requests) }),
+      el("td", {}, l.errors
+        ? el("span", { class: "chip fail" }, icon("x-circle"), `오류 ${l.errors}`)
+        : el("span", { class: "chip pass" }, icon("check-circle"), `성공 ${l.ok}`)),
+      el("td", { class: "num", text: l.rps.toFixed(2) }), el("td", { class: "num", text: l.tok_per_sec.toFixed(1) }),
+      el("td", { class: "num", text: l.req_tok_per_s.toFixed(1) }), el("td", { class: "num", text: ms(l.lat_p50_ms) }),
+      el("td", { class: "num", text: ms(l.lat_p95_ms) }), el("td", { class: "num", text: ms(l.lat_max_ms) }),
+      el("td", { class: "num", text: ms(l.ttft_p50_ms) }), el("td", { class: "num", text: ms(l.ttft_p95_ms) }),
+      el("td", { class: "wrap", text: l.first_error || "" })));
+    parts.push(el("div", { class: "section-title" }, icon("chart-bar"), "수준별 결과"),
+      table([["동시", "num"], ["요청", "num"], ["결과"], ["req/s", "num"], ["tok/s", "num"], ["요청당 tok/s", "num"], ["p50", "num"], ["p95", "num"], ["max", "num"], ["TTFT p50", "num"], ["TTFT p95", "num"], ["첫 오류"]], rows));
+    if (done) parts.push(el("p", { class: "path", text: "권장 동시 수: 오류 없이 처리량이 앞 수준보다 10% 이상 늘어난 마지막 수준. 그 뒤로는 처리량이 거의 안 늘고 지연만 길어집니다." }));
+  }
+  body.replaceChildren(...parts);
+}
+
+let benchAbort = null;
+$("#benchForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  if (benchAbort) return;
+  const f = e.target.elements;
+  const v = formValues();
+  const levelsText = f.levels.value;
+  const requests = Number(f.requests.value || 0);
+  const plan = levelsText.split(",").map((s) => Number(s.trim())).filter((n) => n > 0)
+    .map((level) => ({ level, requests: Math.max(requests || level * 2, level) }));
+  const state = { plan, levels: [], live: {}, recommend: 0, done: false };
+  renderBench(state);
+  benchAbort = new AbortController();
+  $("#benchRun").hidden = true;
+  $("#benchStop").hidden = false;
+  setStatus("busy");
+  try {
+    const res = await fetch("/api/bench", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        base_url: v.base_url, api_key: v.api_key, preset: v.preset, model: v.model, server: v.server,
+        temperature: v.temperature, reasoning_effort: v.reasoning_effort, system: v.system,
+        max_tokens: Number(f.max_tokens.value || 256), think: $("input[name=benchThink]:checked").value,
+        levels: levelsText, requests, prompt: f.prompt.value,
+      }),
+      signal: benchAbort.signal,
+    });
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `HTTP ${res.status}`);
+    const reader = res.body.getReader();
+    const dec = new TextDecoder();
+    let buf = "";
+    let last = 0;
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let i;
+      while ((i = buf.indexOf("\n\n")) >= 0) {
+        const block = buf.slice(0, i);
+        buf = buf.slice(i + 2);
+        const event = (/^event: (.*)$/m.exec(block) || [])[1];
+        const data = JSON.parse((/^data: (.*)$/m.exec(block) || [])[1] || "null");
+        if (event === "sample") {
+          const c = (state.live[data.level] ||= { done: 0, errors: 0 });
+          c.done++;
+          if (!data.ok) c.errors++;
+        } else if (event === "level") state.levels.push(data);
+        else if (event === "done") { state.recommend = data.recommend; state.done = true; }
+        else if (event === "error") throw new Error(data);
+        // 진행 표시는 0.2초에 한 번만 다시 그린다
+        if (event !== "sample" || Date.now() - last > 200) { renderBench(state); last = Date.now(); }
+      }
+    }
+    renderBench(state);
+    setStatus("ok");
+  } catch (err) {
+    if (err.name !== "AbortError") {
+      $("#benchBody").append(el("p", { class: "error-box", text: err.message }));
+      setStatus("err");
+    } else {
+      $("#benchBody").append(el("p", { class: "path", text: "중지했습니다. 끝난 수준까지만 기록에 남깁니다." }));
+      setStatus("ok");
+    }
+  } finally {
+    benchAbort = null;
+    $("#benchRun").hidden = false;
+    $("#benchStop").hidden = true;
+  }
+});
+$("#benchStop").addEventListener("click", () => benchAbort?.abort());
+
 // ---- 기록 탭 ----
 
 let histRecords = [];
@@ -970,7 +1156,7 @@ function showTab(name) {
   store("tab", name);
 }
 for (const b of $$(".tabs button")) b.addEventListener("click", () => showTab(b.dataset.tab));
-showTab(["scenario", "history", "logs"].includes(store("tab")) ? store("tab") : "chat");
+showTab(["scenario", "bench", "history", "logs"].includes(store("tab")) ? store("tab") : "chat");
 
 renderEmpty();
 pollLogs();

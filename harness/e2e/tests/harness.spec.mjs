@@ -171,6 +171,22 @@ test("기록 탭: 호출과 시나리오가 쌓인다", async () => {
   expect(existsSync(join(tmp, "runs", files[0]))).toBe(true);
 });
 
+test("부하 테스트: 슬롯 4개인 모의 서버에서 권장 동시 수 4", async () => {
+  await tab("bench");
+  const form = page.locator("#benchForm");
+  await form.locator("input[name=levels]").fill("1,2,4,8");
+  await form.locator("input[name=requests]").fill("8");
+  await form.locator("input[name=max_tokens]").fill("32");
+  await page.locator("#benchRun").click();
+  await expect(page.locator("#benchRun")).toBeVisible({ timeout: 30_000 });
+  const tiles = page.locator("#benchBody .tile");
+  await expect(tiles.nth(0)).toContainText("권장 동시 수4");
+  await expect(tiles.nth(3)).toContainText("0건");
+  await expect(page.locator("#benchBody tbody tr")).toHaveCount(4);
+  await expect(page.locator("#benchBody .chart")).toHaveCount(2);
+  await expect(page.locator("#benchBody .chart .tag").first()).toContainText("권장");
+});
+
 test("설정 패널 접기·펴기 (버튼, 새로고침 유지, Ctrl+B)", async () => {
   const app = page.locator(".app");
   const toggle = page.locator("#openSidebar");

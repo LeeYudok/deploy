@@ -6,11 +6,20 @@
 //   "ping" → pong · "내 이름은 X" → 기억 · "이름?" → 앞 턴의 X · "a*b" → 곱
 //   "코드" → main.go 코드 블록 · "천천히" → 6초 동안 느리게 스트리밍 · "빈본문" → 추론만 주고 본문은 비움
 // chat_template_kwargs.thinking 이 true 면 reasoning_content 를 먼저 보낸다 (sglang deepseek-v3 파서처럼).
-// GET /__requests 는 최근 요청(본문과 Authorization 헤더 유무)을 돌려준다.
+// GET /__requests 는 최근 요청(본문과 Authorization 헤더 유무)을 돌려준다. 부하 테스트 요청은 넣지 않는다.
+// MOCK_SLOTS(기본 4)는 동시에 처리하는 요청 수다. 부하 테스트 요청은 슬롯을 150ms 붙잡는다.
 import http from "node:http";
 
 const port = Number(process.env.MOCK_PORT || 18901);
 const requests = [];
+
+// 부하 테스트용: 동시에 MOCK_SLOTS 건만 처리하고 나머지는 줄을 세운다.
+// 부하 테스트 요청("(요청 #")은 슬롯을 150ms 붙잡아서 처리량이 슬롯 수에서 멈추게 한다.
+const slots = Number(process.env.MOCK_SLOTS || 4);
+let busy = 0;
+const waiting = [];
+const acquire = () => new Promise((r) => (busy < slots ? (busy++, r()) : waiting.push(r)));
+const release = () => (waiting.length ? waiting.shift()() : busy--);
 
 function answer(messages) {
   const users = messages.filter((m) => m.role === "user").map((m) => m.content);
@@ -49,8 +58,14 @@ const server = http.createServer((req, res) => {
   req.on("data", (c) => { raw += c; });
   req.on("end", async () => {
     const body = JSON.parse(raw);
-    requests.push({ body, auth: req.headers.authorization || "" });
     const last = body.messages.at(-1)?.content || "";
+    if (/\(요청 #/.test(last)) {
+      await acquire();
+      await new Promise((r) => setTimeout(r, 150));
+      release();
+    } else {
+      requests.push({ body, auth: req.headers.authorization || "" });
+    }
     const thinking = body.chat_template_kwargs?.thinking === true;
     const content = answer(body.messages);
     const reasoning = thinking || /빈본문/.test(last) ? `생각: ${last} → ${content || "(답을 추론 안에서 끝냄)"}` : "";

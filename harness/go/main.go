@@ -108,6 +108,8 @@ func main() {
 	noOpen := flag.Bool("no-open", false, "웹 UI 실행 시 브라우저를 열지 않음")
 	noRecord := flag.Bool("no-record", false, "실행 기록(runs/*.jsonl)을 남기지 않음")
 	flag.StringVar(&runsFlag, "runs", "", "실행 기록 폴더 (기본: scenarios 폴더 옆의 runs)")
+	bench := flag.String("bench", "", "동시 처리 부하 테스트: 동시 수준 목록 (예: 1,2,4,8)")
+	benchRequests := flag.Int("bench-requests", 0, "부하 테스트 수준당 요청 수 (0 이면 수준의 2배)")
 	flag.Parse()
 
 	if presetID != "" {
@@ -168,6 +170,8 @@ func main() {
 		}
 	}
 	switch {
+	case *bench != "":
+		err = runBenchCLI(ctx, opt, *bench, *benchRequests, *prompt, *system, *think)
 	case *models:
 		var list []ModelInfo
 		if list, err = listModels(ctx, opt); err == nil {
@@ -429,4 +433,36 @@ func runScenarios(ctx context.Context, opt Options, hideThink bool, spec, defaul
 		fmt.Println(line)
 	}
 	return totalFails, nil
+}
+
+// runBenchCLI 는 부하 테스트를 돌리고 수준별 표를 출력한다.
+func runBenchCLI(ctx context.Context, opt Options, spec string, requests int, prompt, system, think string) error {
+	levels, err := parseLevels(spec)
+	if err != nil {
+		return err
+	}
+	cfg := BenchConfig{Levels: levels, Requests: requests, Prompt: prompt, System: system, Think: think}
+	fmt.Fprintf(os.Stderr, "부하 테스트: 동시 %v, 수준당 요청 %s, max_tokens %d, think=%s\n", levels, map[bool]string{true: "수준의 2배", false: strconv.Itoa(requests)}[requests <= 0], opt.MaxTokens, think)
+	fmt.Printf("%6s %6s %5s %7s %9s %10s %9s %9s %9s %9s\n", "동시", "요청", "오류", "req/s", "tok/s", "요청당tok/s", "p50", "p95", "TTFT p50", "TTFT p95")
+	res, err := runBench(ctx, opt, cfg, nil, func(b BenchLevel) {
+		ms := func(v int64) string { return (time.Duration(v) * time.Millisecond).Round(time.Millisecond).String() }
+		fmt.Printf("%6d %6d %5d %7.2f %9.1f %10.1f %9s %9s %9s %9s\n", b.Level, b.Requests, b.Errors, b.RPS, b.TokPerSec, b.ReqTokPerS, ms(b.LatP50ms), ms(b.LatP95ms), ms(b.TTFTP50ms), ms(b.TTFTP95ms))
+		if b.FirstError != "" {
+			fmt.Printf("       첫 오류: %s\n", b.FirstError)
+		}
+	})
+	rec := recommendLevel(res)
+	if rec > 0 {
+		fmt.Printf("\n권장 동시 수: %d (오류 없이 처리량이 10%% 이상 늘어난 마지막 수준)\n", rec)
+	} else {
+		fmt.Println("\n권장 동시 수: 판단할 수 없음 (첫 수준부터 오류)")
+	}
+	if cliRuns != nil {
+		r := BenchRecord{Type: "bench", Time: time.Now().Format(timeFmt), Source: "cli", BaseURL: opt.Base, Model: opt.Model, Server: opt.Server,
+			Think: think, MaxTokens: opt.MaxTokens, Prompt: prompt, Requests: requests, Levels: res, Recommend: rec, Stopped: err != nil}
+		if werr := cliRuns.append(r); werr != nil {
+			fmt.Fprintln(os.Stderr, "기록 쓰기 실패:", werr)
+		}
+	}
+	return err
 }
