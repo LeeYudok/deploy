@@ -275,6 +275,8 @@ def print_stats(r):
     if r.get("ttft"):
         parts.append("첫토큰 %.3fs" % r["ttft"])
     parts.append("추론 %d자" % len(r["reasoning"]))
+    if not r["content"].strip():
+        parts.append("본문 없음")  # 모델이 추론 안에서 답을 끝내고 본문을 비우는 경우가 있다
     u = r.get("usage")
     if u:
         tok = "토큰 prompt=%s completion=%s" % (u.get("prompt_tokens"), u.get("completion_tokens"))

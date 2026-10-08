@@ -288,6 +288,8 @@ button:focus-visible, .segmented label:focus-within { outline: 2px solid var(--a
 .chip.accent { background: var(--accent-soft); border-color: transparent; color: var(--accent); }
 .chip.pass { background: var(--pass-soft); border-color: transparent; color: var(--pass); font-family: var(--font); font-weight: 600; }
 .chip.fail { background: var(--fail-soft); border-color: transparent; color: var(--fail); font-family: var(--font); font-weight: 600; }
+.chip.warn { background: transparent; border-color: var(--warn); color: var(--warn); font-family: var(--font); font-weight: 600; }
+.empty-answer { color: var(--warn); font-style: italic; }
 .chip .icon { width: 12px; height: 12px; }
 .copy { height: 22px; width: 22px; border-radius: 6px; }
 .copy .icon { width: 14px; height: 14px; }
@@ -308,12 +310,12 @@ button:focus-visible, .segmented label:focus-within { outline: 2px solid var(--a
 
 /* ---- 시나리오 ---- */
 .scenario { overflow-y: auto; }
-.scenario-wrap { max-width: 980px; margin: 0 auto; padding: 4px 20px 32px; }
+.scenario-wrap { max-width: 1440px; margin: 0 auto; padding: 4px 20px 32px; }
 .toolbar {
   display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px;
   background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow-sm);
 }
-.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 10px; margin: 14px 0 18px; }
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 10px; margin: 14px 0 18px; }
 .sc-card { position: relative; display: block; cursor: pointer; }
 .sc-card input { position: absolute; opacity: 0; pointer-events: none; }
 .sc-card .inner {

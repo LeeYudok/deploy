@@ -229,6 +229,10 @@ func printStats(r Result) {
 		parts = append(parts, fmt.Sprintf("첫토큰 %s", r.TTFT.Round(time.Millisecond)))
 	}
 	parts = append(parts, fmt.Sprintf("추론 %d자", len([]rune(r.Reasoning))))
+	if strings.TrimSpace(r.Content) == "" {
+		// 모델이 추론 안에서 답을 끝내고 본문을 비우는 경우가 있다.
+		parts = append(parts, "본문 없음")
+	}
 	if u := r.Usage; u != nil {
 		tok := fmt.Sprintf("토큰 prompt=%d completion=%d", u.PromptTokens, u.CompletionTokens)
 		if u.CompletionTokensDetails != nil {

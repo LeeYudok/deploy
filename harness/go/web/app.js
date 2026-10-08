@@ -276,11 +276,17 @@ function assistantView(container, think) {
       thinkBody.textContent = r.reasoning || "";
       details.hidden = !r.reasoning;
       label.textContent = `추론 과정 · ${[...(r.reasoning || "")].length.toLocaleString()}자`;
+      // 모델이 추론 안에서 답을 끝내고 본문을 비우는 경우가 있다. 빈 칸으로 두지 않고 알린다.
+      const emptyAnswer = !r.content.trim();
+      if (emptyAnswer) {
+        answer.replaceChildren(el("p", { class: "empty-answer", text: r.reasoning ? "본문 없이 추론만 왔습니다. 위 추론 과정 끝에 답이 있을 수 있어요." : "빈 응답이 왔습니다." }));
+        details.open = !!r.reasoning;
+      }
       const copy = el("button", { type: "button", class: "icon-btn copy", title: "답변 복사", "aria-label": "답변 복사" }, icon("copy"));
       copy.addEventListener("click", async () => {
         try { await navigator.clipboard.writeText(r.content); copy.replaceChildren(icon("check")); } catch (e) { /* 클립보드 권한 없음 */ }
       });
-      meta.replaceChildren(...statChips(r, think), copy);
+      meta.replaceChildren(...statChips(r, think), ...(emptyAnswer ? [el("span", { class: "chip warn", text: "본문 0자" })] : []), copy);
     },
     fail(msg) {
       answer.classList.remove("streaming");
@@ -483,11 +489,12 @@ function checkExpect(answer, expect) {
 }
 
 function renderSummary(rows) {
-  const checks = rows.reduce((a, r) => a + r.checks, 0);
-  const passed = rows.reduce((a, r) => a + r.checks - r.fails, 0);
+  // 통과율은 실제로 검사한 턴만 센다. 중지해서 못 돈 턴은 넣지 않는다.
+  const checks = rows.reduce((a, r) => a + r.checked, 0);
+  const passed = rows.reduce((a, r) => a + r.checked - r.fails, 0);
   const elapsed = rows.reduce((a, r) => a + r.elapsed, 0);
   const turns = rows.reduce((a, r) => a + r.done, 0);
-  const okRows = rows.filter((r) => !r.running && !r.fails).length;
+  const okRows = rows.filter((r) => !r.running && !r.stopped && !r.fails).length;
   const rate = checks ? Math.round((passed / checks) * 100) : 0;
   const tile = (label, value, cls) => el("div", { class: "tile" }, el("small", { text: label }), el("b", { class: cls, text: value }));
   const tiles = el("div", { class: "tiles" },
@@ -499,13 +506,15 @@ function renderSummary(rows) {
     el("div", { class: "board-row head" }, el("span", { text: "시나리오" }), el("span", { class: "bar-cell", text: "진행" }), el("span", { text: "결과" }), el("span", { class: "num", text: "소요" })),
     ...rows.map((r) => {
       const pct = r.turns ? (r.done / r.turns) * 100 : 0;
-      const state = r.running ? "" : r.fails ? "fail" : "pass";
+      const state = r.running ? "" : r.fails ? "fail" : r.stopped ? "" : "pass";
       return el("div", { class: "board-row" },
         el("span", { text: r.name }),
         el("span", { class: "bar-cell" }, el("div", { class: "bar " + state }, el("span", { style: `width:${pct}%` }))),
         el("span", {}, r.running
           ? el("span", { class: "chip", text: `${r.done}/${r.turns}` })
-          : el("span", { class: "chip " + state }, icon(r.fails ? "x-circle" : "check-circle"), r.fails ? `FAIL ${r.fails}` : "PASS")),
+          : r.stopped && !r.fails
+            ? el("span", { class: "chip", text: `중지 ${r.done}/${r.turns}` })
+            : el("span", { class: "chip " + state }, icon(r.fails ? "x-circle" : "check-circle"), r.fails ? `FAIL ${r.fails}` : "PASS")),
         el("span", { class: "num", text: fmtSec(r.elapsed) }),
         r.note ? el("span", { class: "note", text: r.note }) : null);
     }));
@@ -521,7 +530,7 @@ $("#scRun").addEventListener("click", async () => {
   log.replaceChildren();
   const rows = picked.map((s) => ({
     name: s.name, turns: s.turns.length, checks: s.turns.filter((t) => t.expect?.length).length,
-    done: 0, fails: 0, elapsed: 0, note: "", running: true,
+    done: 0, checked: 0, fails: 0, elapsed: 0, note: "", running: true, stopped: false,
   }));
   renderSummary(rows);
 
@@ -551,9 +560,15 @@ $("#scRun").addEventListener("click", async () => {
         } catch (err) {
           const aborted = err.name === "AbortError";
           view.fail(aborted ? "중지했습니다" : err.message);
-          row.fails += s.turns.slice(ti).filter((x) => x.expect?.length).length;
-          row.note = aborted ? "중지함" : err.message;
-          if (aborted) throw err;
+          if (aborted) {
+            row.stopped = true;
+            throw err;
+          }
+          // 호출 오류는 남은 검사까지 실패로 센다.
+          const left = s.turns.slice(ti).filter((x) => x.expect?.length).length;
+          row.checked += left;
+          row.fails += left;
+          row.note = err.message;
           break;
         }
         messages.push({ role: "assistant", content: r.content });
@@ -561,6 +576,7 @@ $("#scRun").addEventListener("click", async () => {
         row.elapsed += r.elapsed_ms;
         if (t.expect?.length) {
           const miss = checkExpect(r.content, t.expect);
+          row.checked++;
           if (miss.length) row.fails++;
           view.meta.prepend(el("span", { class: "chip " + (miss.length ? "fail" : "pass") },
             icon(miss.length ? "x-circle" : "check-circle"),
@@ -575,7 +591,10 @@ $("#scRun").addEventListener("click", async () => {
   } catch (err) {
     if (err.name !== "AbortError") log.append(el("p", { class: "error-box", text: err.message }));
   } finally {
-    rows.forEach((r) => { r.running = false; });
+    rows.forEach((r) => {
+      if (r.running && r.done < r.turns) r.stopped = true;
+      r.running = false;
+    });
     renderSummary(rows);
     scAbort = null;
     $("#scRun").hidden = false;
