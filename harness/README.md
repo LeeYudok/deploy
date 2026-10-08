@@ -94,6 +94,13 @@ think = ""             # 고르면 thinking 도 이 값으로
 |---|---|
 | `ko-memory.json` / `en-memory.json` / `ja-memory.json` / `zh-memory.json` | 이름·숫자를 기억하고, 값을 바꾼 뒤에도 최신 값으로 답하는지 (한·영·일·중) |
 | `ko-think-toggle.json` | 턴마다 thinking 을 켜고 끄면서 앞 턴 계산 결과를 이어 쓰는지 |
+| `coder-trace.json` | 코드 읽기: Python 함수의 반환값을 계산하고, 코드를 바꾼 뒤·되돌린 뒤 다시 계산하는지 |
+| `coder-bugfix.json` | 버그 찾기: Go 함수의 잘못된 반환값을 짚고, 고친 코드와 그 결과·빈 입력 동작을 답하는지 |
+| `coder-generate.json` | 코드 생성·수정: 함수 작성 → 요구 추가 → pytest 작성 → 결과 계산 |
+| `coder-sql.json` | PostgreSQL 쿼리 작성 (집계·상위 N, 주문 없는 고객, 인덱스) |
+| `coder-json-format.json` | 컴파일 오류를 `{file, line, fix}` JSON 하나로만 답하는지 (thinking off) |
+
+`coder-*` 는 사내 LLM 을 코딩 도우미로 쓸 때를 본다. 답이 하나로 정해지는 문제만 골랐지만, 검사는 기대 문자열이 들어 있는지만 보므로 코드를 실행해 맞는지까지는 확인하지 않는다.
 
 형식:
 

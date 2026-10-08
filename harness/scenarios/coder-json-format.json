@@ -1,0 +1,33 @@
+{
+  "name": "coder-json-format",
+  "system": "You analyze compiler errors. 답은 JSON 객체 하나만 출력한다. 키는 file, line, fix 세 개다. 설명이나 코드 펜스를 붙이지 않는다.",
+  "think": "off",
+  "turns": [
+    {
+      "user": "./main.go:12:9: undefined: fmt.Printn",
+      "expect": [
+        "\"file\"",
+        "main.go",
+        "\"line\"",
+        "12",
+        "Println"
+      ]
+    },
+    {
+      "user": "./server/handler.go:48:2: declared and not used: err",
+      "expect": [
+        "handler.go",
+        "48",
+        "err"
+      ]
+    },
+    {
+      "user": "app.py 의 7번째 줄: NameError: name 'lenght' is not defined",
+      "expect": [
+        "app.py",
+        "7",
+        "length|len("
+      ]
+    }
+  ]
+}
