@@ -1,0 +1,236 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>LLM Harness</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="style.css">
+<script>
+  // 저장된 테마를 그리기 전에 적용한다 (깜빡임 방지).
+  try { const t = localStorage.getItem("theme"); if (t) document.documentElement.dataset.theme = t; } catch (e) {}
+</script>
+</head>
+<body>
+<div class="app">
+  <div class="backdrop" id="backdrop" hidden></div>
+
+  <aside class="sidebar" id="sidebar" aria-label="설정">
+    <div class="brand">
+      <span class="logo" aria-hidden="true"><span></span></span>
+      <div>
+        <strong>LLM Harness</strong>
+        <small>온프렘 LLM 테스트</small>
+      </div>
+      <button type="button" class="icon-btn only-mobile" id="closeSidebar" aria-label="설정 닫기" data-icon="x"></button>
+    </div>
+
+    <div class="status" id="status">
+      <span class="dot" id="statusDot"></span>
+      <div class="status-text">
+        <strong id="statusServer">서버 확인 전</strong>
+        <small id="statusModel">-</small>
+      </div>
+      <button type="button" class="icon-btn" id="loadModels" title="모델 목록·서버 다시 확인" aria-label="모델 목록 새로고침" data-icon="arrows-clockwise"></button>
+    </div>
+
+    <form id="settings" class="settings" autocomplete="off">
+      <fieldset class="group">
+        <legend data-icon="plugs-connected">연결</legend>
+        <label class="field">
+          <span>프리셋</span>
+          <select name="preset">
+            <option value="">직접 입력</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>접속주소</span>
+          <input name="base_url" placeholder="http://HOST:PORT/v1" required spellcheck="false">
+        </label>
+        <label class="field">
+          <span>서버</span>
+          <select name="server">
+            <option value="auto">자동 판별</option>
+            <option value="sglang">sglang</option>
+            <option value="vllm">vLLM</option>
+            <option value="ollama">Ollama</option>
+            <option value="openai">OpenAI 호환</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>API 키</span>
+          <input name="api_key" type="password" placeholder="없음" autocomplete="off">
+        </label>
+        <label class="check small" id="keyRow" hidden>
+          <input type="checkbox" name="clear_api_key"> <span id="keyText">저장된 키 지우기</span>
+        </label>
+        <label class="field">
+          <span>모델</span>
+          <input name="model" list="modelList" required spellcheck="false">
+        </label>
+        <datalist id="modelList"></datalist>
+      </fieldset>
+
+      <fieldset class="group">
+        <legend data-icon="lightning">생성</legend>
+        <div class="row2">
+          <label class="field">
+            <span>temperature</span>
+            <input name="temperature" type="number" step="0.1" min="0" max="2">
+          </label>
+          <label class="field">
+            <span>max_tokens</span>
+            <input name="max_tokens" type="number" step="1" min="1">
+          </label>
+        </div>
+        <label class="field">
+          <span>reasoning_effort</span>
+          <select name="reasoning_effort">
+            <option value="">보내지 않음</option>
+            <option value="none">none</option>
+            <option value="low">low</option>
+            <option value="medium">medium</option>
+            <option value="high">high</option>
+          </select>
+        </label>
+        <label class="switch">
+          <input type="checkbox" name="stream" checked>
+          <span class="track" aria-hidden="true"></span>
+          스트리밍
+        </label>
+      </fieldset>
+
+      <fieldset class="group">
+        <legend data-icon="sparkle">시스템 프롬프트</legend>
+        <textarea name="system" rows="4" aria-label="시스템 프롬프트"></textarea>
+      </fieldset>
+    </form>
+
+    <div class="sidebar-foot">
+      <button type="submit" form="settings" class="btn primary block" data-icon="floppy-disk">.env.toml 에 저장</button>
+      <p class="hint"><span id="saveStatus">화면 값은 저장 전에도 바로 쓰입니다.</span></p>
+      <p class="path" id="cfgPath"></p>
+    </div>
+  </aside>
+
+  <main class="main">
+    <div class="update-bar" id="updateBar" hidden>
+      <span data-icon="sparkle">새 버전이 배포됐습니다</span>
+      <small id="updateTime"></small>
+      <button type="button" class="btn primary" id="reloadBtn" data-icon="arrows-clockwise">새로고침</button>
+      <button type="button" class="icon-btn" id="updateClose" aria-label="닫기" data-icon="x"></button>
+    </div>
+    <header class="topbar">
+      <button type="button" class="icon-btn only-mobile" id="openSidebar" aria-label="설정 열기" data-icon="gear-six"></button>
+      <nav class="segmented tabs" role="tablist" aria-label="화면">
+        <button type="button" role="tab" data-tab="chat" aria-selected="true" data-icon="chat-circle-dots" title="대화"><span class="label">대화</span></button>
+        <button type="button" role="tab" data-tab="scenario" aria-selected="false" data-icon="list-checks" title="시나리오"><span class="label">시나리오</span></button>
+        <button type="button" role="tab" data-tab="history" aria-selected="false" data-icon="clock-counter-clockwise" title="기록"><span class="label">기록</span></button>
+        <button type="button" role="tab" data-tab="logs" aria-selected="false" data-icon="terminal-window" title="로그"><span class="label">로그</span><span class="tab-dot" id="logDot" hidden></span></button>
+      </nav>
+      <div class="spacer"></div>
+      <button type="button" class="btn ghost" id="resetChat" data-icon="arrow-counter-clockwise"><span class="label">새 대화</span></button>
+      <button type="button" class="icon-btn" id="themeBtn" aria-label="테마 바꾸기"></button>
+    </header>
+
+    <section id="tab-chat" class="tab chat" role="tabpanel">
+      <div class="thread" id="chatLog" aria-live="polite"></div>
+
+      <form id="composer" class="composer">
+        <div class="composer-box">
+          <textarea name="q" rows="1" placeholder="메시지를 입력하세요" aria-label="메시지"></textarea>
+          <div class="composer-bar">
+            <div class="segmented small" role="radiogroup" aria-label="thinking">
+              <span class="seg-label" data-icon="brain">thinking</span>
+              <label><input type="radio" name="think" value="auto" form="settings" checked><span>Auto</span></label>
+              <label><input type="radio" name="think" value="on" form="settings"><span>On</span></label>
+              <label><input type="radio" name="think" value="off" form="settings"><span>Off</span></label>
+            </div>
+            <span class="spacer"></span>
+            <span class="turns" id="turnCount"></span>
+            <button type="button" class="round-btn stop" id="stopChat" aria-label="중지" hidden data-icon="stop"></button>
+            <button type="submit" class="round-btn" id="send" aria-label="보내기" data-icon="arrow-up"></button>
+          </div>
+        </div>
+        <p class="composer-hint">Enter 보내기 · Shift+Enter 줄바꿈 · 매 턴 앞선 대화 전체를 함께 보냅니다</p>
+      </form>
+    </section>
+
+    <section id="tab-scenario" class="tab scenario" role="tabpanel" hidden>
+      <div class="scenario-wrap">
+        <div class="toolbar">
+          <div class="segmented small" role="radiogroup" aria-label="시나리오 thinking">
+            <span class="seg-label" data-icon="brain">thinking</span>
+            <label><input type="radio" name="scThink" value="" checked><span>시나리오 값</span></label>
+            <label><input type="radio" name="scThink" value="on"><span>모두 On</span></label>
+            <label><input type="radio" name="scThink" value="off"><span>모두 Off</span></label>
+            <label><input type="radio" name="scThink" value="auto"><span>모두 Auto</span></label>
+          </div>
+          <span class="spacer"></span>
+          <button type="button" class="btn ghost" id="scAll" data-icon="check">전체 선택</button>
+          <button type="button" class="btn ghost" id="scStop" hidden data-icon="stop">중지</button>
+          <button type="button" class="btn primary" id="scRun" data-icon="play">실행</button>
+        </div>
+        <p class="path" id="scSource"></p>
+        <div class="cards" id="scList"></div>
+        <div id="scSummary"></div>
+        <div id="scLog" class="sclog"></div>
+      </div>
+    </section>
+    <section id="tab-history" class="tab history" role="tabpanel" hidden>
+      <div class="logs-wrap">
+        <div class="toolbar">
+          <div class="segmented small" role="radiogroup" aria-label="기간">
+            <label><input type="radio" name="histDays" value="1"><span>오늘</span></label>
+            <label><input type="radio" name="histDays" value="7" checked><span>7일</span></label>
+            <label><input type="radio" name="histDays" value="30"><span>30일</span></label>
+            <label><input type="radio" name="histDays" value="0"><span>전체</span></label>
+          </div>
+          <label class="inline-field">모델
+            <select id="histModel"><option value="">전체</option></select>
+          </label>
+          <label class="inline-field">출처
+            <select id="histSource">
+              <option value="">전체</option>
+              <option value="web-chat">웹 대화</option>
+              <option value="web-scenario">웹 시나리오</option>
+              <option value="cli">CLI</option>
+            </select>
+          </label>
+          <span class="spacer"></span>
+          <button type="button" class="btn ghost" id="histReload" data-icon="arrows-clockwise">새로고침</button>
+        </div>
+        <p class="path" id="histDir"></p>
+        <div id="histBody"></div>
+      </div>
+    </section>
+
+    <section id="tab-logs" class="tab logs" role="tabpanel" hidden>
+      <div class="logs-wrap">
+        <div class="toolbar">
+          <div class="segmented small" role="radiogroup" aria-label="로그 종류">
+            <label><input type="radio" name="logFilter" value="all" checked><span>전체</span></label>
+            <label><input type="radio" name="logFilter" value="llm"><span>LLM</span></label>
+            <label><input type="radio" name="logFilter" value="http"><span>HTTP</span></label>
+            <label><input type="radio" name="logFilter" value="error"><span>오류</span></label>
+          </div>
+          <span class="muted-note" id="logCount"></span>
+          <span class="spacer"></span>
+          <label class="switch">
+            <input type="checkbox" id="logFollow" checked>
+            <span class="track" aria-hidden="true"></span>
+            자동 스크롤
+          </label>
+          <button type="button" class="btn ghost" id="logClear" data-icon="trash">화면 비우기</button>
+        </div>
+        <p class="path">LLM 서버로 보낸 요청 JSON 과 응답 요약을 보여 줍니다. API 키는 헤더로만 보내서 여기에 나오지 않습니다. 같은 줄이 터미널에도 찍힙니다.</p>
+        <div class="loglist" id="logList" data-filter="all"></div>
+      </div>
+    </section>
+  </main>
+</div>
+<script src="icons.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

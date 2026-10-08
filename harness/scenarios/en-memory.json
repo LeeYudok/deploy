@@ -1,0 +1,11 @@
+{
+  "name": "en-memory",
+  "system": "You are a helpful assistant. Answer briefly in English.",
+  "turns": [
+    {"user": "My name is Alice and my favorite number is 42. Please remember that."},
+    {"user": "What is my name?", "expect": ["Alice"]},
+    {"user": "What is my favorite number multiplied by 2?", "expect": ["84"]},
+    {"user": "I changed my favorite number to 7. What is it multiplied by 3?", "expect": ["21"]},
+    {"user": "Summarize my name and my current favorite number in one line.", "expect": ["Alice", "7"]}
+  ]
+}

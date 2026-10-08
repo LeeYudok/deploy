@@ -1,4 +1,0 @@
-llmtest
-*.exe
-.env.toml
-!bin/llmtest.exe
