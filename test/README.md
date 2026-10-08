@@ -3,9 +3,38 @@
 sglang 등 OpenAI 호환 API(`/v1/chat/completions`)를 호출하는 테스트 클라이언트.
 표준 라이브러리만 사용하므로 외부 모듈 다운로드 없이(폐쇄망에서도) 빌드된다.
 
-## Windows 64비트에서 실행
+## Windows 64비트에서 바로 실행 (Go 설치 불필요)
+
+`bin/llmtest.exe` 는 미리 빌드한 Windows 64비트 실행파일이다(Go 1.27.1, CGO 없음).
+`bin` 폴더에 `.env.toml` 을 만들고 바로 실행한다.
+
+```bat
+cd test\bin
+copy ..\.env.toml.example .env.toml
+notepad .env.toml
+llmtest.exe -models
+llmtest.exe -p "안녕하세요"
+```
+
+> 소스를 바꿨으면 아래 4번 또는 Linux/Mac 에서 다시 빌드해 `bin/llmtest.exe` 를 갱신한다:
+> `CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o bin/llmtest.exe .`
+
+## Windows 64비트에서 소스로 실행
 
 ### 1. Go 설치
+
+**설치 없이 쓰기 (폐쇄망 권장)**: `bin/go1.27.1.windows-amd64.zip` 을 원하는 폴더(예: `D:\`)에 압축 해제하고 PATH 에 추가한다.
+`go.exe` 하나만 복사하면 빌드되지 않는다. 압축을 푼 `go` 폴더 전체(`pkg\tool`, `src` 포함)가 있어야 한다.
+
+```bat
+set PATH=D:\go\bin;%PATH%
+set GOTOOLCHAIN=local
+go version
+```
+
+무결성 확인: `certutil -hashfile go1.27.1.windows-amd64.zip SHA256` 결과가 `bin/SHA256SUMS` 와 같아야 한다.
+
+**설치판 쓰기**:
 
 1. https://go.dev/dl/ 에서 **`go1.xx.x.windows-amd64.msi`** 다운로드 (1.21 이상)
    - 인터넷이 안 되는 PC는 다른 PC에서 받아서 옮긴 뒤 설치
