@@ -30,6 +30,7 @@ notepad .env.toml
 
 ```toml
 [preset.dev]
+order = "1"            # 콤보 순서 (작은 수가 먼저, 없으면 뒤에 id 순)
 label = "개발 sglang"
 base_url = "http://<HOST>:<PORT>/v1"
 model = "<모델 id>"
@@ -117,7 +118,7 @@ think = ""             # 고르면 thinking 도 이 값으로
 
 온프렘 모델은 실제 청구액이 없다. 비교하고 싶은 상용 API 의 단가를 모델별로 넣으면 그 단가로 환산해 보여 준다.
 
-- 기준 단가는 **OpenRouter** 공개 목록(`https://openrouter.ai/api/v1/models`)이다. 기록 탭의 **OpenRouter 기준으로 채우기** 를 누르면 기록에 나온 모델과 프리셋 모델을 같은 이름의 OpenRouter 모델과 맞춰 단가를 저장한다. 이름은 조직 접두어(`RedHatAI/`), 변형(`:batch`), 양자화 꼬리표(`-INT4`, `-AWQ`, `-FP8` 등)를 떼고 비교한다. 양자화본은 원본 모델 단가로 본다.
+- 기준 단가는 **OpenRouter** 공개 목록(`https://openrouter.ai/api/v1/models`)이다. 기록 탭의 **OpenRouter 기준으로 채우기** 를 누르면 기록에 나온 모델과 프리셋 모델을 같은 이름의 OpenRouter 모델과 맞춰 단가를 저장한다. 이름은 조직 접두어(`RedHatAI/`), 변형(`:batch`), 양자화 꼬리표(`-INT4`, `-AWQ`, `-FP8` 등)를 떼고 비교한다. 양자화본은 원본 모델 단가로 본다. Ollama 이름 `qwen3.8:27b` 는 `qwen3.8-27b` 로 본다.
 - 인터넷이 필요하다. 폐쇄망 PC 라면 인터넷 되는 PC 에서 채운 `.env.toml` 의 `[price]` 섹션을 복사한다.
 - 표에서 단가를 손으로 고쳐 저장할 수도 있다 (100만 토큰당 USD, 입력·출력 따로). 두 값을 비우고 저장하면 지운다.
 - `.env.toml` 에 이렇게 남는다. 직접 적어도 된다.
