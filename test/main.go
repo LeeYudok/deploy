@@ -5,6 +5,9 @@
 //	go run . -p "안녕하세요"
 //	go run . -stream -p "Go 언어 장점 3가지"
 //	go run . -models
+//
+// 접속 정보는 .env.toml 에서 읽는다 (.env.toml.example 참고).
+// 우선순위: 명령행 플래그 > 환경변수 > .env.toml > 기본값
 package main
 
 import (
@@ -16,6 +19,8 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -49,17 +54,102 @@ type ChatResponse struct {
 	} `json:"usage"`
 }
 
-func getenv(key, def string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
+// loadToml 은 key = "value" 형태의 단순 TOML 을 읽는다.
+// [section] 이 있으면 키는 "section.key" 로 저장된다.
+func loadToml(path string) (map[string]string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
 	}
-	return def
+	defer f.Close()
+
+	cfg := map[string]string{}
+	section := ""
+	sc := bufio.NewScanner(f)
+	for n := 1; sc.Scan(); n++ {
+		line := strings.TrimSpace(sc.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]") {
+			section = strings.TrimSpace(line[1 : len(line)-1])
+			continue
+		}
+		k, v, ok := strings.Cut(line, "=")
+		if !ok {
+			return nil, fmt.Errorf("%s:%d: '=' 없음", path, n)
+		}
+		k = strings.TrimSpace(k)
+		v = strings.TrimSpace(v)
+		if strings.HasPrefix(v, `"`) {
+			end := strings.LastIndex(v, `"`)
+			if end == 0 {
+				return nil, fmt.Errorf("%s:%d: 닫는 따옴표 없음", path, n)
+			}
+			if v, err = strconv.Unquote(v[:end+1]); err != nil {
+				return nil, fmt.Errorf("%s:%d: %v", path, n, err)
+			}
+		} else if i := strings.Index(v, "#"); i >= 0 {
+			v = strings.TrimSpace(v[:i])
+		}
+		if section != "" {
+			k = section + "." + k
+		}
+		cfg[k] = v
+	}
+	return cfg, sc.Err()
+}
+
+// findConfig 는 현재 디렉터리, 실행파일 디렉터리 순으로 .env.toml 을 찾는다.
+func findConfig() string {
+	candidates := []string{".env.toml"}
+	if exe, err := os.Executable(); err == nil {
+		candidates = append(candidates, filepath.Join(filepath.Dir(exe), ".env.toml"))
+	}
+	for _, c := range candidates {
+		if _, err := os.Stat(c); err == nil {
+			return c
+		}
+	}
+	return ""
 }
 
 func main() {
-	baseURL := flag.String("url", getenv("LLM_BASE_URL", "http://192.168.157.153:30112/v1"), "API base URL")
-	model := flag.String("model", getenv("LLM_MODEL", "deepseek-v4-flash-0731"), "모델명")
-	apiKey := flag.String("key", getenv("LLM_API_KEY", ""), "API 키 (필요한 경우)")
+	cfgPath := findConfig()
+	for i, a := range os.Args[1:] {
+		if a == "-config" || a == "--config" {
+			if i+2 < len(os.Args) {
+				cfgPath = os.Args[i+2]
+			}
+		} else if v, ok := strings.CutPrefix(strings.TrimLeft(a, "-"), "config="); ok {
+			cfgPath = v
+		}
+	}
+	cfg := map[string]string{}
+	if cfgPath != "" {
+		var err error
+		if cfg, err = loadToml(cfgPath); err != nil {
+			fmt.Fprintln(os.Stderr, "ERROR: 설정파일:", err)
+			os.Exit(1)
+		}
+	}
+	conf := func(env, key, def string) string {
+		if v := os.Getenv(env); v != "" {
+			return v
+		}
+		if v, ok := cfg["llm."+key]; ok {
+			return v
+		}
+		if v, ok := cfg[key]; ok {
+			return v
+		}
+		return def
+	}
+
+	flag.String("config", cfgPath, "설정파일 경로")
+	baseURL := flag.String("url", conf("LLM_BASE_URL", "base_url", ""), "API base URL")
+	model := flag.String("model", conf("LLM_MODEL", "model", ""), "모델명")
+	apiKey := flag.String("key", conf("LLM_API_KEY", "api_key", ""), "API 키 (필요한 경우)")
 	prompt := flag.String("p", "안녕하세요. 간단히 자기소개 해주세요.", "사용자 프롬프트")
 	system := flag.String("sys", "You are a helpful assistant. 한국어로 답변하세요.", "시스템 프롬프트")
 	temp := flag.Float64("t", 0.7, "temperature")
@@ -68,6 +158,15 @@ func main() {
 	listModels := flag.Bool("models", false, "모델 목록만 조회")
 	timeout := flag.Duration("timeout", 300*time.Second, "요청 타임아웃")
 	flag.Parse()
+
+	if *baseURL == "" {
+		fmt.Fprintln(os.Stderr, "ERROR: 접속주소 없음. .env.toml 의 base_url 을 설정하세요 (.env.toml.example 참고)")
+		os.Exit(1)
+	}
+	if *model == "" && !*listModels {
+		fmt.Fprintln(os.Stderr, "ERROR: 모델명 없음. .env.toml 의 model 을 설정하세요")
+		os.Exit(1)
+	}
 
 	client := &http.Client{Timeout: *timeout}
 	base := strings.TrimRight(*baseURL, "/")
