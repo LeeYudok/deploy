@@ -106,7 +106,8 @@ commands:
     test: 'cd harness/e2e && E2E_CHANNEL=chrome npx playwright test'
   checks:
     agents_yaml: scripts/check-agents-yaml.sh
-    public_leak: "git diff --cached | grep -E '^\\+' | grep -iE '192\\.168\\.|doksam\\.com'"
+    public_leak: "! git diff --cached | grep -E '^\\+' | grep -iE '192\\.168\\.|doksam\\.com'"
+    public_leak_note: 'exits 0 when clean, 1 when a staged line matches (prints the matches)'
 
 secret_files:
 - host: local

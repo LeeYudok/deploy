@@ -18,7 +18,7 @@
 
 ## 규칙
 
-- **public 레포다.** 커밋·이슈·PR 에 사내 호스트명·IP 를 넣지 않는다. `<HOST>:<PORT>` 로 쓴다. 커밋 전에 `AGENTS.yaml` 의 `commands.checks.public_leak` 를 돌린다.
+- **public 레포다.** 커밋·이슈·PR 에 사내 호스트명·IP 를 넣지 않는다. `<HOST>:<PORT>` 로 쓴다. 커밋 전에 `AGENTS.yaml` 의 `commands.checks.public_leak` 를 돌린다 (깨끗하면 0, 걸리면 1 로 끝나고 걸린 줄을 보여 준다).
 - `harness/.env.toml` 은 출력하지 않는다. 키 이름만 필요하면 `grep -oE '^[a-z_]+ *='`.
 - 클라이언트는 Go·Python 모두 표준 라이브러리만 쓴다. 폐쇄망에서 다시 빌드할 수 있어야 한다.
 - 웹 UI 는 바닐라 HTML/JS + `go:embed` 다. Node 빌드를 넣지 않는다. 아이콘은 `web/icons.js` 의 Phosphor path 인라인이고 이모지는 쓰지 않는다.
