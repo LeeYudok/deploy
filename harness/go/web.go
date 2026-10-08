@@ -84,7 +84,8 @@ func runWeb(addr string, open bool, cfgPath string, cfg map[string]string, s Set
 	mux.HandleFunc("/api/runs/scenario", ws.handleRunScenario)
 	mux.HandleFunc("/api/bench", ws.handleBench)
 	mux.HandleFunc("/api/prices", ws.handlePrices)
-	mux.HandleFunc("/api/prices/openrouter", ws.handleOpenRouterPrices)
+	mux.HandleFunc("/api/prices/compare", ws.handlePriceCompare)
+	mux.HandleFunc("/api/prices/fill", ws.handlePriceFill)
 
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
@@ -636,9 +637,32 @@ func (ws *webServer) handlePrices(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, ws.prices)
 }
 
-// handleOpenRouterPrices 는 OpenRouter 공개 모델 목록에서 같은 모델의 단가를 찾아 저장한다 (issue #18).
-// 인터넷이 필요하다. 폐쇄망에서는 인터넷 되는 PC 에서 채운 [price] 섹션을 옮긴다.
-func (ws *webServer) handleOpenRouterPrices(w http.ResponseWriter, r *http.Request) {
+// fetchCatalog 는 공개 단가 카탈로그(openrouter, orcarouter) 하나를 가져온다. 인터넷이 필요하다.
+func (ws *webServer) fetchCatalog(ctx context.Context, source string) ([]ORModel, error) {
+	url, ok := priceCatalogs[source]
+	if !ok {
+		return nil, fmt.Errorf("모르는 단가 출처: %q", source)
+	}
+	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := ws.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("%s 에 연결하지 못했습니다 (인터넷 필요): %v", catalogLabel[source], err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 32<<20))
+	if err != nil || resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("%s 응답 오류: HTTP %d %v", catalogLabel[source], resp.StatusCode, err)
+	}
+	return parseCatalog(body)
+}
+
+// handlePriceCompare 는 두 카탈로그의 단가를 함께 가져와 모델별로 돌려준다 (issue #20). 저장하지 않는다.
+func (ws *webServer) handlePriceCompare(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
@@ -650,25 +674,62 @@ func (ws *webServer) handleOpenRouterPrices(w http.ResponseWriter, r *http.Reque
 		writeErr(w, http.StatusBadRequest, err)
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
-	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, openRouterModels, nil)
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err)
+	type srcInfo struct {
+		Label   string `json:"label"`
+		Fetched int    `json:"fetched"`
+		Error   string `json:"error,omitempty"`
+	}
+	sources := map[string]srcInfo{}
+	lists := map[string][]ORModel{}
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	for src := range priceCatalogs {
+		wg.Add(1)
+		go func(src string) {
+			defer wg.Done()
+			list, err := ws.fetchCatalog(r.Context(), src)
+			mu.Lock()
+			defer mu.Unlock()
+			info := srcInfo{Label: catalogLabel[src], Fetched: len(list)}
+			if err != nil {
+				info.Error = err.Error()
+			}
+			sources[src], lists[src] = info, list
+		}(src)
+	}
+	wg.Wait()
+	matches := map[string]map[string]*ORModel{}
+	for _, model := range in.Models {
+		row := map[string]*ORModel{}
+		for src, list := range lists {
+			if m, ok := matchCatalog(model, list); ok {
+				m := m
+				row[src] = &m
+			} else {
+				row[src] = nil
+			}
+		}
+		matches[model] = row
+	}
+	ws.logs.add("http", "info", fmt.Sprintf("단가 비교 · 모델 %d개 · OpenRouter %d개 · OrcaRouter %d개", len(in.Models), sources["openrouter"].Fetched, sources["orcarouter"].Fetched), "")
+	writeJSON(w, http.StatusOK, map[string]any{"sources": sources, "matches": matches})
+}
+
+// handlePriceFill 은 고른 카탈로그에서 같은 모델의 단가를 찾아 기준 단가로 저장한다 (issue #18, #20).
+func (ws *webServer) handlePriceFill(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	resp, err := ws.client.Do(req)
-	if err != nil {
-		writeErr(w, http.StatusBadGateway, fmt.Errorf("OpenRouter 에 연결하지 못했습니다 (인터넷 필요): %v", err))
+	var in struct {
+		Source string   `json:"source"`
+		Models []string `json:"models"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeErr(w, http.StatusBadRequest, err)
 		return
 	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 32<<20))
-	if err != nil || resp.StatusCode != http.StatusOK {
-		writeErr(w, http.StatusBadGateway, fmt.Errorf("OpenRouter 응답 오류: HTTP %d %v", resp.StatusCode, err))
-		return
-	}
-	list, err := parseOpenRouter(body)
+	list, err := ws.fetchCatalog(r.Context(), in.Source)
 	if err != nil {
 		writeErr(w, http.StatusBadGateway, err)
 		return
@@ -678,13 +739,13 @@ func (ws *webServer) handleOpenRouterPrices(w http.ResponseWriter, r *http.Reque
 	ws.mu.Lock()
 	defer ws.mu.Unlock()
 	for _, model := range in.Models {
-		m, ok := matchOpenRouter(model, list)
+		m, ok := matchCatalog(model, list)
 		if !ok {
 			unmatched = append(unmatched, model)
 			continue
 		}
 		matched[model] = m
-		ws.prices[model] = Price{Input: m.Input, Output: m.Output, Source: "openrouter:" + m.ID}
+		ws.prices[model] = Price{Input: m.Input, Output: m.Output, Source: in.Source + ":" + m.ID}
 	}
 	if len(matched) > 0 {
 		llm := map[string]string{}
@@ -698,6 +759,6 @@ func (ws *webServer) handleOpenRouterPrices(w http.ResponseWriter, r *http.Reque
 			return
 		}
 	}
-	ws.logs.add("http", "info", fmt.Sprintf("OpenRouter 단가 · 모델 %d개 중 %d개 맞춤 · 목록 %d개", len(in.Models), len(matched), len(list)), "")
-	writeJSON(w, http.StatusOK, map[string]any{"matched": matched, "unmatched": unmatched, "prices": ws.prices, "fetched": len(list)})
+	ws.logs.add("http", "info", fmt.Sprintf("%s 단가 적용 · 모델 %d개 중 %d개 맞춤 · 목록 %d개", catalogLabel[in.Source], len(in.Models), len(matched), len(list)), "")
+	writeJSON(w, http.StatusOK, map[string]any{"matched": matched, "unmatched": unmatched, "prices": ws.prices, "fetched": len(list), "source": in.Source})
 }

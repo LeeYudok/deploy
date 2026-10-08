@@ -118,7 +118,8 @@ think = ""             # 고르면 thinking 도 이 값으로
 
 온프렘 모델은 실제 청구액이 없다. 비교하고 싶은 상용 API 의 단가를 모델별로 넣으면 그 단가로 환산해 보여 준다.
 
-- 기준 단가는 **OpenRouter** 공개 목록(`https://openrouter.ai/api/v1/models`)이다. 기록 탭의 **OpenRouter 기준으로 채우기** 를 누르면 기록에 나온 모델과 프리셋 모델을 같은 이름의 OpenRouter 모델과 맞춰 단가를 저장한다. 이름은 조직 접두어(`RedHatAI/`), 변형(`:batch`), 양자화 꼬리표(`-INT4`, `-AWQ`, `-FP8` 등)를 떼고 비교한다. 양자화본은 원본 모델 단가로 본다. Ollama 이름 `qwen3.8:27b` 는 `qwen3.8-27b` 로 본다.
+- 단가는 두 곳의 공개 목록에서 가져온다: **OrcaRouter**(`https://api.orcarouter.ai/v1/models`)와 **OpenRouter**(`https://openrouter.ai/api/v1/models`). 기록 탭의 **단가 비교** 는 두 곳 단가와 지금까지 쓴 토큰의 환산 비용을 모델별로 나란히 보여 주고 더 싼 곳을 표시한다 (저장하지 않음). **OrcaRouter 로 적용**, **OpenRouter 로 적용** 은 그쪽 단가를 기준 단가로 저장한다.
+- 모델 이름은 조직 접두어(`RedHatAI/`), 변형(`:batch`), 양자화 꼬리표(`-INT4`, `-AWQ`, `-FP8` 등)를 떼고 비교한다. 양자화본은 원본 모델 단가로 본다. Ollama 이름 `qwen3.8:27b` 는 `qwen3.8-27b` 로 본다. 같은 이름이 여럿이면 조직 이름이 모델 이름과 같은 id(`qwen/qwen3.8-27b`)를 고른다.
 - 인터넷이 필요하다. 폐쇄망 PC 라면 인터넷 되는 PC 에서 채운 `.env.toml` 의 `[price]` 섹션을 복사한다.
 - 표에서 단가를 손으로 고쳐 저장할 수도 있다 (100만 토큰당 USD, 입력·출력 따로). 두 값을 비우고 저장하면 지운다.
 - `.env.toml` 에 이렇게 남는다. 직접 적어도 된다.
@@ -126,16 +127,23 @@ think = ""             # 고르면 thinking 도 이 값으로
   ```toml
   # 100만 토큰당 USD
   [price."RedHatAI/Qwen3.8-27B-INT4"]
-  input = "0.425"
-  output = "2.55"
-  source = "openrouter:qwen/qwen3.8-27b"
+  input = "0.33"
+  output = "2.4"
+  source = "orcarouter:qwen/qwen3.8-27b"
   ```
 
 - 기록 탭: 토큰 합계(입력 → 출력)와 환산 비용 타일, 모델별 토큰·비용. 부하 테스트 토큰도 들어간다.
 - 대화 답변 칩과 CLI 통계 줄에 그 턴의 환산 비용이 붙는다 (단가가 있을 때).
 - 추론(thinking) 토큰은 completion 에 들어 있으므로 출력 단가로 센다.
 - 하네스에는 기본 단가가 없다. 넣지 않으면 "단가 미설정"으로 나온다.
-- 2026-10-09 OpenRouter 기준: `qwen/qwen3.8-27b` 입력 $0.425 · 출력 $2.55, `deepseek/deepseek-v4-flash-0731` 입력 $0.018 · 출력 $1.28 (100만 토큰당). 단가는 바뀌므로 버튼으로 다시 채운다.
+- 2026-10-09 단가 (100만 토큰당 입력 / 출력 USD). 단가는 바뀌므로 버튼으로 다시 가져온다.
+
+  | 모델 | OrcaRouter | OpenRouter |
+  |---|---|---|
+  | `qwen/qwen3.8-27b` | $0.33 / $2.40 | $0.425 / $2.55 |
+  | `deepseek/deepseek-v4-flash-0731` | $0.22 / $0.66 | $0.0137 / $1.28 |
+
+  지금까지의 Qwen 사용량(입력 41,907 · 출력 18,135 토큰)으로 환산하면 OrcaRouter $0.0574, OpenRouter $0.0641 이다. 출력 토큰이 많은 DeepSeek 은 출력 단가가 낮은 OrcaRouter 가 싸고, 입력 위주면 OpenRouter 가 싸다.
 
 ## 동시 처리 부하 테스트
 

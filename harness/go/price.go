@@ -99,11 +99,18 @@ func fmtUSD(v float64) string {
 	return fmt.Sprintf("$%.2f", v)
 }
 
-// ---- OpenRouter 단가 ----
+// ---- 공개 단가 카탈로그 (OpenRouter, OrcaRouter) ----
 
-const openRouterModels = "https://openrouter.ai/api/v1/models"
+// priceCatalogs 는 단가를 가져올 공개 모델 목록이다. 둘 다 pricing.prompt / pricing.completion 이 토큰당 USD 문자열이다.
+var priceCatalogs = map[string]string{
+	"openrouter": "https://openrouter.ai/api/v1/models",
+	"orcarouter": "https://api.orcarouter.ai/v1/models",
+}
 
-// ORModel 은 OpenRouter 모델 하나의 단가다 (100만 토큰당 USD 로 바꾼 값).
+// catalogLabel 은 화면에 보일 이름이다.
+var catalogLabel = map[string]string{"openrouter": "OpenRouter", "orcarouter": "OrcaRouter"}
+
+// ORModel 은 카탈로그 모델 하나의 단가다 (100만 토큰당 USD 로 바꾼 값).
 type ORModel struct {
 	ID     string  `json:"id"`
 	Name   string  `json:"name"`
@@ -111,8 +118,8 @@ type ORModel struct {
 	Output float64 `json:"output"`
 }
 
-// parseOpenRouter 는 /api/v1/models 응답을 읽는다. pricing 은 토큰당 USD 문자열이다.
-func parseOpenRouter(body []byte) ([]ORModel, error) {
+// parseCatalog 는 /models 응답을 읽는다. pricing 은 토큰당 USD 문자열이다. 요청당 단가만 있는 모델은 건너뛴다.
+func parseCatalog(body []byte) ([]ORModel, error) {
 	var raw struct {
 		Data []struct {
 			ID      string `json:"id"`
@@ -169,23 +176,27 @@ func normModel(id string) string {
 	}
 }
 
-// matchOpenRouter 는 하네스 모델 이름과 같은 OpenRouter 모델을 찾는다. 정규화한 이름이 정확히 같아야 한다.
-// 여러 개면 변형 없는 id(:batch 등이 없는 것)를 고른다.
-func matchOpenRouter(model string, list []ORModel) (ORModel, bool) {
+// matchCatalog 는 하네스 모델 이름과 같은 카탈로그 모델을 찾는다. 정규화한 이름이 정확히 같아야 한다.
+// 여러 개면 변형 없는 id(:batch, ~ 가 없는 것)를 먼저, 그다음 조직 이름이 모델 이름 앞부분과 같은 id
+// (qwen/qwen3.8-27b 가 obsidian/Qwen3.8-27B 보다 먼저)를 고른다. 점수가 같으면 목록 앞쪽.
+func matchCatalog(model string, list []ORModel) (ORModel, bool) {
 	want := normModel(model)
 	var best ORModel
-	found := false
+	bestScore := -1
 	for _, m := range list {
 		if normModel(m.ID) != want {
 			continue
 		}
-		plain := !strings.Contains(m.ID, ":") && !strings.HasPrefix(m.ID, "~")
-		if !found || plain {
-			best, found = m, true
-			if plain {
-				break
-			}
+		score := 0
+		if !strings.Contains(m.ID, ":") && !strings.HasPrefix(m.ID, "~") {
+			score += 2
+		}
+		if org, _, ok := strings.Cut(strings.ToLower(strings.TrimPrefix(m.ID, "~")), "/"); ok && strings.HasPrefix(want, org) {
+			score++
+		}
+		if score > bestScore {
+			best, bestScore = m, score
 		}
 	}
-	return best, found
+	return best, bestScore >= 0
 }
