@@ -100,7 +100,7 @@ thinking 을 켜고 끄는 요청 필드가 서버마다 다르다. `-server aut
 | Ollama | `library` | 보내지 않음 (기본이 thinking) | `reasoning_effort: "none"` |
 | 그 밖 | 그 외 | sglang 과 같음 | sglang 과 같음 |
 
-- `-think auto` 는 아무것도 보내지 않는다. **sglang 의 DeepSeek 계열(`--reasoning-parser deepseek-v3`)은 `thinking: true` 를 명시해야만 추론하므로 auto 는 thinking 꺼짐과 같다.** Qwen3·GLM 계열은 반대로 auto 가 켜짐이다 (sglang 0.5.10 `serving_chat.py` `_get_reasoning_from_request`).
+- `-think auto` 는 아무것도 보내지 않으므로 결과가 서버 설정에 달려 있다. sglang 0.5.10 코드(`serving_chat.py` `_get_reasoning_from_request`)로는 DeepSeek 계열(`--reasoning-parser deepseek-v3`)은 `thinking: true` 를 명시해야만 추론하고, Qwen3·GLM 계열은 기본이 켜짐이다. 다만 서버 기동 옵션이나 템플릿에 따라 달라진다 — 아래 vllm.dev 실측은 Qwen3.8 인데도 auto 가 꺼짐이었다. **thinking 을 비교할 때는 auto 대신 on/off 를 명시한다.**
 - 채팅 템플릿 변수는 모델마다 이름이 달라 두 개를 같이 보낸다 (DeepSeek·Kimi `thinking`, Qwen3·GLM `enable_thinking`). sglang 도 `reasoning_effort: "none"` 을 받으면 내부에서 이 두 키를 `false` 로 채운다. 템플릿이 쓰지 않는 변수는 무시된다.
 - `-effort none|low|medium|high` 는 `reasoning_effort` 를 그대로 보낸다. 직접 정하면 `-think off` 가 덮어쓰지 않는다. sglang 은 0.5.10 부터 `none` 을 받는다 (그 전 버전은 400 이 날 수 있다).
 - 판별이 틀리거나 `/v1/models` 가 막혀 있으면 `-server sglang` 처럼 직접 정한다 (`.env.toml` 의 `server`).
@@ -109,4 +109,9 @@ thinking 을 켜고 끄는 요청 필드가 서버마다 다르다. `-server aut
 - 멀티턴 히스토리에는 추론 과정을 넣지 않고 답변만 넣는다.
 - 턴마다 `[server= | 소요 | 첫토큰 | 추론 N자 | 토큰 prompt= completion= reasoning=]` 를 출력한다. `-think off` 인데 추론 글자 수가 0 이 아니면 서버가 thinking 끄기를 무시한 것이다.
 
-실측 (2026-10-08, 맥 Ollama `qwen3.8:27b`): `-think off` 에서 추론 0자·completion 3 토큰, 시나리오 5개 24턴 모두 PASS.
+실측 (2026-10-08):
+
+| 서버 | 판별 | auto | `-think on` | `-think off` | 시나리오 5개 24턴 |
+|---|---|---|---|---|---|
+| sglang `RedHatAI/Qwen3.8-27B-INT4` (vllm.dev.doksam.com) | `sglang` | 추론 0자, 152ms | 추론 143자, 598ms | 추론 0자, 127ms | on·off 모두 PASS |
+| Ollama `qwen3.8:27b` (맥 로컬) | `ollama` | 추론 있음 | 추론 144자 | 추론 0자, completion 3 토큰 | PASS |
