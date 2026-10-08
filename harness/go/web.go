@@ -44,6 +44,7 @@ type webServer struct {
 	client    *http.Client
 	scenarios string            // 시나리오 파일·폴더 (쉼표로 여러 개)
 	detected  map[string]string // base_url → 판별한 서버 종류
+	presets   []Preset          // .env.toml 의 [preset.*]
 }
 
 func runWeb(addr string, open bool, cfgPath string, cfg map[string]string, s Settings, timeout time.Duration, scenarios string) error {
@@ -61,7 +62,7 @@ func runWeb(addr string, open bool, cfgPath string, cfg map[string]string, s Set
 	if abs, err := filepath.Abs(cfgPath); err == nil {
 		cfgPath = abs
 	}
-	ws := &webServer{settings: s, cfgPath: cfgPath, cfg: cfg, client: &http.Client{Timeout: timeout}, scenarios: scenarios, detected: map[string]string{}}
+	ws := &webServer{settings: s, cfgPath: cfgPath, cfg: cfg, client: &http.Client{Timeout: timeout}, scenarios: scenarios, detected: map[string]string{}, presets: presetsFrom(cfg)}
 
 	static, err := fs.Sub(webFiles, "web")
 	if err != nil {
@@ -148,6 +149,24 @@ func writeErr(w http.ResponseWriter, code int, err error) {
 type connReq struct {
 	BaseURL string `json:"base_url"`
 	APIKey  string `json:"api_key"`
+	Model   string `json:"model"`  // 모델 목록 조회에서 서버를 판별할 때 이 모델의 owned_by 를 본다
+	Preset  string `json:"preset"` // 고른 프리셋 id (그 프리셋의 키를 쓴다)
+}
+
+func sameBase(a, b string) bool {
+	return a != "" && strings.TrimRight(a, "/") == strings.TrimRight(b, "/")
+}
+
+// storedKey 는 저장된 키 중 이 접속주소에 쓸 키를 고른다.
+// 키는 그 키가 저장된 접속주소로만 보낸다 — 화면에서 주소를 바꿨는데 다른 서버의 키가 따라가면 안 된다.
+func (ws *webServer) storedKey(base, preset string) string {
+	if p, ok := findPreset(ws.presets, preset); ok && sameBase(p.BaseURL, base) {
+		return p.APIKey
+	}
+	if sameBase(ws.settings.BaseURL, base) {
+		return ws.settings.APIKey
+	}
+	return ""
 }
 
 func (ws *webServer) options(c connReq) Options {
@@ -158,7 +177,7 @@ func (ws *webServer) options(c connReq) Options {
 		o.Base = strings.TrimRight(ws.settings.BaseURL, "/")
 	}
 	if o.APIKey == "" {
-		o.APIKey = ws.settings.APIKey
+		o.APIKey = ws.storedKey(o.Base, c.Preset)
 	}
 	return o
 }
@@ -167,11 +186,20 @@ func (ws *webServer) handleConfig(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
 		ws.mu.Lock()
+		type presetView struct {
+			Preset
+			APIKeySet bool `json:"api_key_set"`
+		}
+		views := make([]presetView, 0, len(ws.presets))
+		for _, p := range ws.presets {
+			views = append(views, presetView{p, p.APIKey != ""})
+		}
 		out := struct {
 			Settings
-			APIKeySet  bool   `json:"api_key_set"`
-			ConfigPath string `json:"config_path"`
-		}{ws.settings, ws.settings.APIKey != "", ws.cfgPath}
+			APIKeySet  bool         `json:"api_key_set"`
+			ConfigPath string       `json:"config_path"`
+			Presets    []presetView `json:"presets"`
+		}{ws.settings, ws.settings.APIKey != "", ws.cfgPath, views}
 		ws.mu.Unlock()
 		writeJSON(w, http.StatusOK, out)
 
@@ -180,6 +208,7 @@ func (ws *webServer) handleConfig(w http.ResponseWriter, r *http.Request) {
 			Settings
 			APIKey      string `json:"api_key"`
 			ClearAPIKey bool   `json:"clear_api_key"`
+			Preset      string `json:"preset"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 			writeErr(w, http.StatusBadRequest, err)
@@ -202,11 +231,13 @@ func (ws *webServer) handleConfig(w http.ResponseWriter, r *http.Request) {
 		defer ws.mu.Unlock()
 		s := in.Settings
 		s.BaseURL = strings.TrimSpace(s.BaseURL)
-		s.APIKey = ws.settings.APIKey
-		if in.ClearAPIKey {
+		switch {
+		case in.ClearAPIKey:
 			s.APIKey = ""
-		} else if in.APIKey != "" {
+		case in.APIKey != "":
 			s.APIKey = in.APIKey
+		default:
+			s.APIKey = ws.storedKey(s.BaseURL, in.Preset)
 		}
 
 		llm := map[string]string{}
@@ -226,12 +257,11 @@ func (ws *webServer) handleConfig(w http.ResponseWriter, r *http.Request) {
 		llm["temperature"] = strconv.FormatFloat(s.Temperature, 'f', -1, 64)
 		llm["max_tokens"] = strconv.Itoa(s.MaxTokens)
 		llm["system"] = s.System
-		if err := saveToml(ws.cfgPath, llm); err != nil {
+		if err := saveToml(ws.cfgPath, llm, ws.presets); err != nil {
 			writeErr(w, http.StatusInternalServerError, err)
 			return
 		}
 		ws.settings = s
-		ws.cfg = map[string]string{}
 		for k, v := range llm {
 			ws.cfg["llm."+k] = v
 		}
@@ -257,12 +287,26 @@ func (ws *webServer) handleModels(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, errors.New("접속주소(base_url)를 입력하세요"))
 		return
 	}
-	list, err := listModels(r.Context(), opt)
+	// 상태 확인용이라 오래 기다리지 않는다 (닿지 않는 주소면 -timeout 300s 를 다 기다리게 된다).
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+	list, err := listModels(ctx, opt)
 	if err != nil {
 		writeErr(w, http.StatusBadGateway, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, list)
+	// 화면 상태 표시용으로 서버 종류도 같이 준다. 판별 결과는 대화 요청에서도 다시 쓴다.
+	owner := ""
+	for _, m := range list {
+		if m.ID == c.Model || owner == "" {
+			owner = m.OwnedBy
+		}
+	}
+	server := serverFromOwner(owner)
+	ws.mu.Lock()
+	ws.detected[opt.Base] = server
+	ws.mu.Unlock()
+	writeJSON(w, http.StatusOK, map[string]any{"models": list, "server": server, "owned_by": owner})
 }
 
 func (ws *webServer) handleScenarios(w http.ResponseWriter, r *http.Request) {

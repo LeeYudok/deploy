@@ -41,6 +41,16 @@ func main() {
 			cfgPath = v
 		}
 	}
+	presetID := ""
+	for i, a := range os.Args[1:] {
+		if a == "-preset" || a == "--preset" {
+			if i+2 < len(os.Args) {
+				presetID = os.Args[i+2]
+			}
+		} else if v, ok := strings.CutPrefix(strings.TrimLeft(a, "-"), "preset="); ok {
+			presetID = v
+		}
+	}
 	cfg := map[string]string{}
 	if cfgPath != "" {
 		var err error
@@ -48,7 +58,13 @@ func main() {
 			fail("설정파일: %v", err)
 		}
 	}
+	// 우선순위: 플래그 > -preset > 환경변수 > [llm]
 	conf := func(env, key, def string) string {
+		if presetID != "" {
+			if v := cfg["preset."+presetID+"."+key]; v != "" {
+				return v
+			}
+		}
 		if v := os.Getenv(env); v != "" {
 			return v
 		}
@@ -70,6 +86,7 @@ func main() {
 	}
 
 	flag.String("config", cfgPath, "설정파일 경로")
+	flag.String("preset", presetID, ".env.toml 의 [preset.<id>] 로 접속 (예: -preset dev)")
 	baseURL := flag.String("url", conf("LLM_BASE_URL", "base_url", ""), "API base URL")
 	model := flag.String("model", conf("LLM_MODEL", "model", ""), "모델명")
 	apiKey := flag.String("key", conf("LLM_API_KEY", "api_key", ""), "API 키 (필요한 경우)")
@@ -91,6 +108,11 @@ func main() {
 	noOpen := flag.Bool("no-open", false, "웹 UI 실행 시 브라우저를 열지 않음")
 	flag.Parse()
 
+	if presetID != "" {
+		if _, ok := findPreset(presetsFrom(cfg), presetID); !ok {
+			fail("프리셋 없음: %q (.env.toml 의 [preset.%s] 를 확인하세요)", presetID, presetID)
+		}
+	}
 	if _, _, err := parseThink(*think); err != nil {
 		fail("%v", err)
 	}

@@ -408,11 +408,16 @@ def run_scenarios(cli, spec, default_system, default_think):
 def main():
     argv = sys.argv[1:]
     cfg_path = find_config()
+    preset = ""
     for i, a in enumerate(argv):
         if a in ("-config", "--config") and i + 1 < len(argv):
             cfg_path = argv[i + 1]
         elif a.lstrip("-").startswith("config="):
             cfg_path = a.lstrip("-")[len("config="):]
+        elif a in ("-preset", "--preset") and i + 1 < len(argv):
+            preset = argv[i + 1]
+        elif a.lstrip("-").startswith("preset="):
+            preset = a.lstrip("-")[len("preset="):]
     cfg = {}
     if cfg_path:
         try:
@@ -420,11 +425,17 @@ def main():
         except (OSError, ValueError, SyntaxError) as e:
             sys.exit("ERROR: 설정파일: %s" % e)
 
+    if preset and not any(k.startswith("preset.%s." % preset) for k in cfg):
+        sys.exit("ERROR: 프리셋 없음: %r (.env.toml 의 [preset.%s] 를 확인하세요)" % (preset, preset))
+
+    # 우선순위: 플래그 > -preset > 환경변수 > [llm]
     def conf(env, key, default):
-        return os.environ.get(env) or cfg.get("llm." + key) or cfg.get(key) or default
+        return ((preset and cfg.get("preset.%s.%s" % (preset, key))) or os.environ.get(env)
+                or cfg.get("llm." + key) or cfg.get(key) or default)
 
     ap = argparse.ArgumentParser(description="OpenAI 호환 LLM 호출 테스트")
     ap.add_argument("-config", default=cfg_path, help="설정파일 경로")
+    ap.add_argument("-preset", default=preset, help=".env.toml 의 [preset.<id>] 로 접속 (예: -preset dev)")
     ap.add_argument("-url", default=conf("LLM_BASE_URL", "base_url", ""), help="API base URL")
     ap.add_argument("-model", default=conf("LLM_MODEL", "model", ""), help="모델명")
     ap.add_argument("-key", default=conf("LLM_API_KEY", "api_key", ""), help="API 키 (필요한 경우)")

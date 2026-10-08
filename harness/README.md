@@ -22,6 +22,26 @@ notepad .env.toml
 `harness/.env.toml` 하나를 두면 `go/`, `go/bin/`, `python/` 어디서 실행해도 찾는다
 (현재 폴더와 실행파일·스크립트 폴더에서 각각 상위 2단계까지 찾는다).
 
+### 접속 프리셋
+
+서버가 여러 대면 `.env.toml` 에 `[preset.<id>]` 섹션으로 적어 둔다. 웹 UI 의 **프리셋** 콤보에서 고르면 주소·모델·서버 종류·키가 한 번에 바뀌고, CLI 는 `-preset <id>` 로 쓴다.
+접속주소와 키가 들어가므로 프리셋은 `.env.toml`(git 에 안 올림)에만 둔다.
+
+```toml
+[preset.dev]
+label = "개발 sglang"
+base_url = "http://<HOST>:<PORT>/v1"
+model = "<모델 id>"
+server = "sglang"      # 생략하면 auto
+api_key = ""           # 필요한 경우만
+think = ""             # 고르면 thinking 도 이 값으로
+```
+
+- 우선순위: **플래그 > `-preset` > 환경변수 > `[llm]`**
+- 웹 UI 의 모델 콤보에는 서버가 알려 준 모델과 프리셋 모델이 함께 나온다.
+- 저장된 키는 **그 키가 적힌 접속주소로만** 보낸다. 화면에서 주소를 바꾸면 다른 서버의 키가 따라가지 않는다.
+- 웹 UI 에서 `.env.toml 에 저장` 을 눌러도 프리셋 섹션은 그대로 남는다 (`[llm]` 만 바뀐다).
+
 ## 실행 모드
 
 | 모드 | Go | Python |
@@ -39,11 +59,12 @@ notepad .env.toml
 
 `llmtest.exe -web` 을 실행하면 브라우저에 `http://127.0.0.1:8787/` 이 열린다. exe 하나에 화면(HTML/JS/CSS)이 들어 있어서 Node·인터넷이 필요 없다.
 
-- **설정**: 접속주소·API 키·모델·thinking·reasoning_effort·temperature·max_tokens·시스템 프롬프트를 바꾼다. 화면 값은 바로 호출에 쓰이고, `.env.toml 에 저장` 을 누르면 파일에 쓴다. `목록` 은 `/v1/models` 로 모델을 불러온다.
-- **대화**: 멀티턴 대화. 턴마다 thinking 을 바꿔 가며 보낼 수 있고, 추론 과정은 접힌 상자로, 소요·첫토큰·토큰 수는 답변 아래에 표시한다.
-- **시나리오**: `scenarios/` 를 골라 돌리고 PASS/FAIL 표를 보여 준다. thinking 을 `모두 on` / `모두 off` 로 강제해 비교할 수 있다.
+- **설정(왼쪽)**: 프리셋·접속주소·서버 종류·API 키·모델·temperature·max_tokens·reasoning_effort·스트리밍·시스템 프롬프트. 화면 값은 바로 호출에 쓰이고, `.env.toml 에 저장` 을 누르면 파일에 쓴다. 위쪽 상태 카드에 판별한 서버와 모델이 나오고, 새로고침 버튼으로 `/v1/models` 를 다시 부른다.
+- **대화**: 멀티턴 대화. 입력창의 thinking `Auto / On / Off` 로 턴마다 바꿔 보낸다. 추론 과정은 스트리밍 중엔 펼쳐 보이고 끝나면 접히며, 답변 아래에 서버·think·소요·TTFT·토큰 칩과 복사 버튼이 붙는다. 코드 블록은 따로 그린다.
+- **시나리오**: `scenarios/` 를 카드로 골라 돌린다. thinking 을 `모두 On / Off / Auto` 로 강제해 비교할 수 있고, 검사 통과율·통과 시나리오·소요 요약 타일과 시나리오별 진행 막대, 턴별 로그를 보여 준다.
+- 라이트·다크·시스템 테마를 오른쪽 위 버튼으로 바꾼다. 화면은 폭 900px 아래에서 설정이 서랍으로 접힌다.
 - 기본은 이 PC(127.0.0.1)에서만 열린다. 다른 PC 에서 보려면 `-addr 0.0.0.0:8787` 로 연다 (같은 망에서 누구나 이 화면으로 LLM 을 호출할 수 있게 되니 주의).
-- API 키는 화면으로 내보내지 않는다. 저장된 키가 있으면 "저장된 키 사용 중" 만 표시한다.
+- API 키는 화면으로 내보내지 않는다. 키 칸에 "저장된 키 사용" / "프리셋 키 사용" 만 표시한다.
 - `-no-open` 은 브라우저를 열지 않는다. 저장 위치는 화면 위쪽에 나온다 (설정파일이 없으면 `harness/.env.toml` 에 만든다).
 
 ### 대화형 멀티턴 (`-chat`)
@@ -113,5 +134,5 @@ thinking 을 켜고 끄는 요청 필드가 서버마다 다르다. `-server aut
 
 | 서버 | 판별 | auto | `-think on` | `-think off` | 시나리오 5개 24턴 |
 |---|---|---|---|---|---|
-| sglang `RedHatAI/Qwen3.8-27B-INT4` (vllm.dev.doksam.com) | `sglang` | 추론 0자, 152ms | 추론 143자, 598ms | 추론 0자, 127ms | on·off 모두 PASS |
+| sglang `RedHatAI/Qwen3.8-27B-INT4` (사내 개발 서버) | `sglang` | 추론 0자, 152ms | 추론 143자, 598ms | 추론 0자, 127ms | on·off 모두 PASS |
 | Ollama `qwen3.8:27b` (맥 로컬) | `ollama` | 추론 있음 | 추론 144자 | 추론 0자, completion 3 토큰 | PASS |

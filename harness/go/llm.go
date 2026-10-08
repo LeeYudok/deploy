@@ -148,8 +148,75 @@ func loadToml(path string) (map[string]string, error) {
 	return cfg, sc.Err()
 }
 
-// saveToml 은 [llm] 섹션 값을 .env.toml 로 쓴다. 기존 주석은 남지 않는다.
-func saveToml(path string, llm map[string]string) error {
+// Preset 은 .env.toml 의 [preset.<id>] 섹션이다. 웹 UI 의 프리셋 콤보와 -preset 플래그가 쓴다.
+// 접속주소와 키가 들어가므로 .env.toml(git 에 안 올림)에만 둔다.
+type Preset struct {
+	ID      string `json:"id"`
+	Label   string `json:"label"`
+	BaseURL string `json:"base_url"`
+	Model   string `json:"model"`
+	Server  string `json:"server"`
+	Think   string `json:"think"`
+	APIKey  string `json:"-"`
+}
+
+var presetKeys = []string{"label", "base_url", "model", "server", "think", "api_key"}
+
+// presetsFrom 은 설정 맵에서 [preset.<id>] 섹션을 모아 id 순으로 돌려준다.
+func presetsFrom(cfg map[string]string) []Preset {
+	byID := map[string]*Preset{}
+	for k, v := range cfg {
+		rest, ok := strings.CutPrefix(k, "preset.")
+		if !ok {
+			continue
+		}
+		dot := strings.LastIndex(rest, ".")
+		if dot <= 0 {
+			continue
+		}
+		id, field := rest[:dot], rest[dot+1:]
+		p := byID[id]
+		if p == nil {
+			p = &Preset{ID: id}
+			byID[id] = p
+		}
+		switch field {
+		case "label":
+			p.Label = v
+		case "base_url":
+			p.BaseURL = v
+		case "model":
+			p.Model = v
+		case "server":
+			p.Server = v
+		case "think":
+			p.Think = v
+		case "api_key":
+			p.APIKey = v
+		}
+	}
+	out := make([]Preset, 0, len(byID))
+	for _, p := range byID {
+		if p.Label == "" {
+			p.Label = p.ID
+		}
+		out = append(out, *p)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out
+}
+
+func findPreset(presets []Preset, id string) (Preset, bool) {
+	for _, p := range presets {
+		if p.ID == id {
+			return p, true
+		}
+	}
+	return Preset{}, false
+}
+
+// saveToml 은 [llm] 섹션과 프리셋 섹션을 .env.toml 로 쓴다. 기존 주석은 남지 않는다.
+func saveToml(path string, llm map[string]string, presets []Preset) error {
 	var b strings.Builder
 	b.WriteString("# LLM 접속 설정 (웹 UI 에서 저장함)\n[llm]\n")
 	written := map[string]bool{}
@@ -169,6 +236,15 @@ func saveToml(path string, llm map[string]string) error {
 	sort.Strings(rest)
 	for _, k := range rest {
 		write(k)
+	}
+	for _, p := range presets {
+		fmt.Fprintf(&b, "\n[preset.%s]\n", p.ID)
+		vals := map[string]string{"label": p.Label, "base_url": p.BaseURL, "model": p.Model, "server": p.Server, "think": p.Think, "api_key": p.APIKey}
+		for _, k := range presetKeys {
+			if vals[k] != "" {
+				fmt.Fprintf(&b, "%s = %s\n", k, strconv.Quote(vals[k]))
+			}
+		}
 	}
 	if err := os.WriteFile(path, []byte(b.String()), 0o600); err != nil {
 		return err
@@ -233,6 +309,8 @@ func serverFromOwner(owner string) string {
 
 // detectServer 는 /v1/models 를 불러 서버 종류를 정한다. 실패하면 openai 로 본다.
 func detectServer(ctx context.Context, opt Options) (server, owner string, err error) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
 	list, err := listModels(ctx, opt)
 	if err != nil {
 		return ServerOpenAI, "", err

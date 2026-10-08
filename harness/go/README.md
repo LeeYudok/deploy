@@ -131,6 +131,7 @@ llmtest.exe -config D:\conf\llm.toml -p "다른 설정파일 사용"
 | `-stream` | | | 스트리밍 출력 |
 | `-models` | | | 모델 목록만 조회 |
 | `-timeout` | | | 요청 타임아웃 (300s) |
+| `-preset` | | `[preset.<id>]` | 프리셋으로 접속 (주소·모델·서버·키) |
 | `-server` | `LLM_SERVER` | `server` | `auto`(기본, `/v1/models` 로 판별) / `sglang` / `vllm` / `ollama` / `openai` |
 | `-think` | `LLM_THINK` | `think` | `on` / `off` / `auto`(기본, 안 보냄) |
 | `-effort` | `LLM_REASONING_EFFORT` | `reasoning_effort` | `none` / `low` / `medium` / `high` (비우면 안 보냄) |

@@ -3,126 +3,178 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>LLM 테스트</title>
+<meta name="color-scheme" content="light dark">
+<title>LLM Harness</title>
 <link rel="icon" href="data:,">
 <link rel="stylesheet" href="style.css">
+<script>
+  // 저장된 테마를 그리기 전에 적용한다 (깜빡임 방지).
+  try { const t = localStorage.getItem("theme"); if (t) document.documentElement.dataset.theme = t; } catch (e) {}
+</script>
 </head>
 <body>
-<header class="top">
-  <h1>LLM 테스트</h1>
-  <span class="muted small" id="cfgPath"></span>
-</header>
+<div class="app">
+  <div class="backdrop" id="backdrop" hidden></div>
 
-<div class="layout">
-  <aside class="panel settings">
-    <form id="settings" autocomplete="off">
-      <h2>접속</h2>
-      <label>접속주소 (base_url)
-        <input name="base_url" placeholder="http://HOST:PORT/v1" required>
-      </label>
-      <label>서버 종류
-        <select name="server">
-          <option value="auto">auto (/v1/models 로 판별)</option>
-          <option value="sglang">sglang</option>
-          <option value="vllm">vLLM</option>
-          <option value="ollama">Ollama</option>
-          <option value="openai">그 밖의 OpenAI 호환</option>
-        </select>
-      </label>
-      <label>API 키
-        <input name="api_key" type="password" placeholder="필요한 경우만">
-      </label>
-      <div class="row small" id="keyRow" hidden>
-        <span class="muted">저장된 키 사용 중</span>
-        <label class="inline"><input type="checkbox" name="clear_api_key"> 저장된 키 지우기</label>
+  <aside class="sidebar" id="sidebar" aria-label="설정">
+    <div class="brand">
+      <span class="logo" aria-hidden="true"><span></span></span>
+      <div>
+        <strong>LLM Harness</strong>
+        <small>온프렘 LLM 테스트</small>
       </div>
-      <label>모델
-        <span class="row">
-          <input name="model" list="modelList" required>
-          <button type="button" id="loadModels" class="ghost">목록</button>
-        </span>
-      </label>
-      <datalist id="modelList"></datalist>
+      <button type="button" class="icon-btn only-mobile" id="closeSidebar" aria-label="설정 닫기" data-icon="x"></button>
+    </div>
 
-      <h2>생성</h2>
-      <div class="grid2">
-        <label>thinking
-          <select name="think">
-            <option value="auto">auto (서버 기본)</option>
-            <option value="on">on</option>
-            <option value="off">off</option>
+    <div class="status" id="status">
+      <span class="dot" id="statusDot"></span>
+      <div class="status-text">
+        <strong id="statusServer">서버 확인 전</strong>
+        <small id="statusModel">-</small>
+      </div>
+      <button type="button" class="icon-btn" id="loadModels" title="모델 목록·서버 다시 확인" aria-label="모델 목록 새로고침" data-icon="arrows-clockwise"></button>
+    </div>
+
+    <form id="settings" class="settings" autocomplete="off">
+      <fieldset class="group">
+        <legend data-icon="plugs-connected">연결</legend>
+        <label class="field">
+          <span>프리셋</span>
+          <select name="preset">
+            <option value="">직접 입력</option>
           </select>
         </label>
-        <label>reasoning_effort
+        <label class="field">
+          <span>접속주소</span>
+          <input name="base_url" placeholder="http://HOST:PORT/v1" required spellcheck="false">
+        </label>
+        <div class="row2">
+          <label class="field">
+            <span>서버</span>
+            <select name="server">
+              <option value="auto">자동 판별</option>
+              <option value="sglang">sglang</option>
+              <option value="vllm">vLLM</option>
+              <option value="ollama">Ollama</option>
+              <option value="openai">OpenAI 호환</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>API 키</span>
+            <input name="api_key" type="password" placeholder="없음">
+          </label>
+        </div>
+        <label class="check small" id="keyRow" hidden>
+          <input type="checkbox" name="clear_api_key"> <span id="keyText">저장된 키 지우기</span>
+        </label>
+        <label class="field">
+          <span>모델</span>
+          <input name="model" list="modelList" required spellcheck="false">
+        </label>
+        <datalist id="modelList"></datalist>
+      </fieldset>
+
+      <fieldset class="group">
+        <legend data-icon="lightning">생성</legend>
+        <div class="row2">
+          <label class="field">
+            <span>temperature</span>
+            <input name="temperature" type="number" step="0.1" min="0" max="2">
+          </label>
+          <label class="field">
+            <span>max_tokens</span>
+            <input name="max_tokens" type="number" step="1" min="1">
+          </label>
+        </div>
+        <label class="field">
+          <span>reasoning_effort</span>
           <select name="reasoning_effort">
             <option value="">보내지 않음</option>
-            <option value="none">none (Ollama thinking 끔)</option>
+            <option value="none">none</option>
             <option value="low">low</option>
             <option value="medium">medium</option>
             <option value="high">high</option>
           </select>
         </label>
-        <label>temperature
-          <input name="temperature" type="number" step="0.1" min="0" max="2">
+        <label class="switch">
+          <input type="checkbox" name="stream" checked>
+          <span class="track" aria-hidden="true"></span>
+          스트리밍
         </label>
-        <label>max_tokens
-          <input name="max_tokens" type="number" step="1" min="1">
-        </label>
-      </div>
-      <label class="inline"><input type="checkbox" name="stream" checked> 스트리밍</label>
-      <label>시스템 프롬프트
-        <textarea name="system" rows="3"></textarea>
-      </label>
+      </fieldset>
 
-      <div class="row">
-        <button type="submit" class="primary">.env.toml 에 저장</button>
-        <span class="small" id="saveStatus"></span>
-      </div>
-      <p class="muted small">화면 값은 저장하지 않아도 바로 호출에 쓰입니다.</p>
+      <fieldset class="group">
+        <legend data-icon="sparkle">시스템 프롬프트</legend>
+        <textarea name="system" rows="4" aria-label="시스템 프롬프트"></textarea>
+      </fieldset>
     </form>
+
+    <div class="sidebar-foot">
+      <button type="submit" form="settings" class="btn primary block" data-icon="floppy-disk">.env.toml 에 저장</button>
+      <p class="hint"><span id="saveStatus">화면 값은 저장 전에도 바로 쓰입니다.</span></p>
+      <p class="path" id="cfgPath"></p>
+    </div>
   </aside>
 
-  <main class="panel main">
-    <nav class="tabs" role="tablist">
-      <button type="button" role="tab" data-tab="chat" aria-selected="true">대화</button>
-      <button type="button" role="tab" data-tab="scenario" aria-selected="false">시나리오</button>
-    </nav>
+  <main class="main">
+    <header class="topbar">
+      <button type="button" class="icon-btn only-mobile" id="openSidebar" aria-label="설정 열기" data-icon="gear-six"></button>
+      <nav class="segmented tabs" role="tablist" aria-label="화면">
+        <button type="button" role="tab" data-tab="chat" aria-selected="true" data-icon="chat-circle-dots">대화</button>
+        <button type="button" role="tab" data-tab="scenario" aria-selected="false" data-icon="list-checks">시나리오</button>
+      </nav>
+      <div class="spacer"></div>
+      <button type="button" class="btn ghost" id="resetChat" data-icon="arrow-counter-clockwise"><span class="label">새 대화</span></button>
+      <button type="button" class="icon-btn" id="themeBtn" aria-label="테마 바꾸기"></button>
+    </header>
 
-    <section id="tab-chat" class="tab">
-      <div id="chatLog" class="log" aria-live="polite">
-        <p class="muted empty">질문을 입력하면 대화가 이어집니다. 매 턴 앞선 대화 전체를 함께 보냅니다.</p>
-      </div>
+    <section id="tab-chat" class="tab chat" role="tabpanel">
+      <div class="thread" id="chatLog" aria-live="polite"></div>
+
       <form id="composer" class="composer">
-        <textarea name="q" rows="2" placeholder="메시지 (Enter 보내기, Shift+Enter 줄바꿈)"></textarea>
-        <div class="col">
-          <button type="submit" class="primary" id="send">보내기</button>
-          <button type="button" id="stopChat" class="ghost" disabled>중지</button>
-          <button type="button" id="resetChat" class="ghost">새 대화</button>
+        <div class="composer-box">
+          <textarea name="q" rows="1" placeholder="메시지를 입력하세요" aria-label="메시지"></textarea>
+          <div class="composer-bar">
+            <div class="segmented small" role="radiogroup" aria-label="thinking">
+              <span class="seg-label" data-icon="brain">thinking</span>
+              <label><input type="radio" name="think" value="auto" form="settings" checked><span>Auto</span></label>
+              <label><input type="radio" name="think" value="on" form="settings"><span>On</span></label>
+              <label><input type="radio" name="think" value="off" form="settings"><span>Off</span></label>
+            </div>
+            <span class="spacer"></span>
+            <span class="turns" id="turnCount"></span>
+            <button type="button" class="round-btn stop" id="stopChat" aria-label="중지" hidden data-icon="stop"></button>
+            <button type="submit" class="round-btn" id="send" aria-label="보내기" data-icon="arrow-up"></button>
+          </div>
         </div>
+        <p class="composer-hint">Enter 보내기 · Shift+Enter 줄바꿈 · 매 턴 앞선 대화 전체를 함께 보냅니다</p>
       </form>
     </section>
 
-    <section id="tab-scenario" class="tab" hidden>
-      <div class="row wrap">
-        <label class="inline">thinking
-          <select id="scThink">
-            <option value="">시나리오 값 따름</option>
-            <option value="on">모두 on</option>
-            <option value="off">모두 off</option>
-            <option value="auto">모두 auto</option>
-          </select>
-        </label>
-        <button type="button" id="scAll" class="ghost">전체 선택</button>
-        <button type="button" id="scRun" class="primary">실행</button>
-        <button type="button" id="scStop" class="ghost" disabled>중지</button>
-        <span class="muted small" id="scSource"></span>
+    <section id="tab-scenario" class="tab scenario" role="tabpanel" hidden>
+      <div class="scenario-wrap">
+        <div class="toolbar">
+          <div class="segmented small" role="radiogroup" aria-label="시나리오 thinking">
+            <span class="seg-label" data-icon="brain">thinking</span>
+            <label><input type="radio" name="scThink" value="" checked><span>시나리오 값</span></label>
+            <label><input type="radio" name="scThink" value="on"><span>모두 On</span></label>
+            <label><input type="radio" name="scThink" value="off"><span>모두 Off</span></label>
+            <label><input type="radio" name="scThink" value="auto"><span>모두 Auto</span></label>
+          </div>
+          <span class="spacer"></span>
+          <button type="button" class="btn ghost" id="scAll" data-icon="check">전체 선택</button>
+          <button type="button" class="btn ghost" id="scStop" hidden data-icon="stop">중지</button>
+          <button type="button" class="btn primary" id="scRun" data-icon="play">실행</button>
+        </div>
+        <p class="path" id="scSource"></p>
+        <div class="cards" id="scList"></div>
+        <div id="scSummary"></div>
+        <div id="scLog" class="sclog"></div>
       </div>
-      <div id="scList" class="sclist"></div>
-      <div id="scSummary"></div>
-      <div id="scLog" class="log"></div>
     </section>
   </main>
 </div>
+<script src="icons.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
