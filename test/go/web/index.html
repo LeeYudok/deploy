@@ -20,6 +20,15 @@
       <label>접속주소 (base_url)
         <input name="base_url" placeholder="http://HOST:PORT/v1" required>
       </label>
+      <label>서버 종류
+        <select name="server">
+          <option value="auto">auto (/v1/models 로 판별)</option>
+          <option value="sglang">sglang</option>
+          <option value="vllm">vLLM</option>
+          <option value="ollama">Ollama</option>
+          <option value="openai">그 밖의 OpenAI 호환</option>
+        </select>
+      </label>
       <label>API 키
         <input name="api_key" type="password" placeholder="필요한 경우만">
       </label>
@@ -47,6 +56,7 @@
         <label>reasoning_effort
           <select name="reasoning_effort">
             <option value="">보내지 않음</option>
+            <option value="none">none (Ollama thinking 끔)</option>
             <option value="low">low</option>
             <option value="medium">medium</option>
             <option value="high">high</option>

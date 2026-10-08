@@ -34,6 +34,7 @@ function formValues() {
     base_url: f.base_url.value.trim(),
     api_key: f.api_key.value,
     model: f.model.value.trim(),
+    server: f.server.value,
     think: f.think.value,
     reasoning_effort: f.reasoning_effort.value,
     temperature: Number(f.temperature.value || 0),
@@ -53,6 +54,7 @@ async function loadConfig() {
   const f = settingsForm.elements;
   f.base_url.value = c.base_url || "";
   f.model.value = c.model || "";
+  f.server.value = c.server || "auto";
   f.think.value = ["on", "off"].includes((c.think || "").toLowerCase()) ? c.think.toLowerCase() : "auto";
   f.reasoning_effort.value = c.reasoning_effort || "";
   f.temperature.value = c.temperature;
@@ -105,7 +107,7 @@ async function callTurn(messages, think, view, signal) {
     body: JSON.stringify({
       base_url: v.base_url, api_key: v.api_key, model: v.model,
       temperature: v.temperature, max_tokens: v.max_tokens,
-      reasoning_effort: v.reasoning_effort, stream: v.stream,
+      reasoning_effort: v.reasoning_effort, stream: v.stream, server: v.server,
       think, messages,
     }),
     signal,
@@ -145,7 +147,7 @@ async function callTurn(messages, think, view, signal) {
 }
 
 function statsText(r, think) {
-  const parts = [`think=${think}`, `소요 ${(r.elapsed_ms / 1000).toFixed(2)}s`];
+  const parts = [`server=${r.server}`, `think=${think}`, `소요 ${(r.elapsed_ms / 1000).toFixed(2)}s`];
   if (r.ttft_ms) parts.push(`첫토큰 ${(r.ttft_ms / 1000).toFixed(2)}s`);
   parts.push(`추론 ${[...(r.reasoning || "")].length}자`);
   const u = r.usage;

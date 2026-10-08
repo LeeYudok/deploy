@@ -66,20 +66,53 @@ def find_config():
     return ""
 
 
-def think_kwargs(mode):
-    """thinking 모드를 chat_template_kwargs 로 바꾼다.
+SERVERS = ("auto", "sglang", "vllm", "ollama", "openai")
 
-    모델마다 템플릿 변수 이름이 달라서 둘 다 보낸다 (DeepSeek: thinking, Qwen3/GLM: enable_thinking).
-    템플릿이 쓰지 않는 변수는 무시된다.
-    """
-    m = (mode or "auto").lower()
+
+def normalize_server(s):
+    v = (s or "auto").strip().lower()
+    if v not in SERVERS:
+        raise ValueError("-server 값은 %s 중 하나: %r" % (" / ".join(SERVERS), s))
+    return v
+
+
+def server_from_owner(owner):
+    """/v1/models 의 owned_by 로 서버 종류를 정한다 (sglang: "sglang", vLLM: "vllm", Ollama: "library")."""
+    o = (owner or "").lower()
+    if o == "sglang":
+        return "sglang"
+    if o == "vllm":
+        return "vllm"
+    if o in ("library", "ollama"):
+        return "ollama"
+    return "openai"
+
+
+def parse_think(mode):
+    """thinking 모드를 읽는다. None 이면 서버 기본값에 맡긴다."""
+    m = (mode or "auto").strip().lower()
     if m == "auto":
         return None
     if m in ("on", "true", "1"):
-        return {"thinking": True, "enable_thinking": True}
+        return True
     if m in ("off", "false", "0"):
-        return {"thinking": False, "enable_thinking": False}
+        return False
     raise ValueError("-think 값은 on / off / auto 중 하나: %r" % mode)
+
+
+def think_params(server, mode, effort):
+    """thinking 모드를 서버에 맞는 요청 필드 (chat_template_kwargs, reasoning_effort) 로 바꾼다.
+
+    sglang·vLLM·그 밖: chat_template_kwargs 에 thinking(DeepSeek·Kimi)과 enable_thinking(Qwen3·GLM)을 함께 보낸다.
+    Ollama: OpenAI 호환 API 가 chat_template_kwargs 를 무시하므로 끌 때 reasoning_effort=none 을 보낸다.
+    reasoning_effort 를 사용자가 정했으면 그 값을 그대로 둔다.
+    """
+    on = parse_think(mode)
+    if on is None:
+        return None, effort
+    if server == "ollama":
+        return None, (effort or ("" if on else "none"))
+    return {"thinking": on, "enable_thinking": on}, effort
 
 
 def split_think(s):
@@ -103,6 +136,7 @@ class Client:
         self.effort = args.effort
         self.hide_think = args.hide_think
         self.timeout = args.timeout
+        self.server = args.server
 
     def _open(self, method, path, body=None):
         data = json.dumps(body).encode("utf-8") if body is not None else None
@@ -117,10 +151,27 @@ class Client:
         except urllib.error.HTTPError as e:
             raise RuntimeError("HTTP %d: %s" % (e.code, e.read().decode("utf-8", "replace")))
 
-    def models(self):
+    def list_models(self):
         with self._open("GET", "/models") as resp:
-            out = json.load(resp)
-        for m in out.get("data", []):
+            return json.load(resp).get("data", [])
+
+    def detect_server(self):
+        """/v1/models 로 서버 종류를 정한다. 실패하면 openai 로 본다."""
+        try:
+            data = self.list_models()
+        except (OSError, RuntimeError, ValueError) as e:
+            self.server = "openai"
+            sys.stderr.write("[서버 판별 실패, openai 로 진행: %s]\n" % e)
+            return
+        owner = ""
+        for m in data:
+            if m.get("id") == self.model or not owner:
+                owner = m.get("owned_by") or ""
+        self.server = server_from_owner(owner)
+        sys.stderr.write("[서버 %s (owned_by=%s)]\n" % (self.server, owner))
+
+    def models(self):
+        for m in self.list_models():
             print("%s\t(owned_by=%s, max_model_len=%s)" % (m.get("id"), m.get("owned_by"), m.get("max_model_len")))
 
     def complete(self, messages, think):
@@ -132,11 +183,11 @@ class Client:
             "max_tokens": self.max_tokens,
             "stream": self.stream,
         }
-        kw = think_kwargs(think)
+        kw, effort = think_params(self.server, think, self.effort)
         if kw:
             body["chat_template_kwargs"] = kw
-        if self.effort:
-            body["reasoning_effort"] = self.effort
+        if effort:
+            body["reasoning_effort"] = effort
         if self.stream:
             body["stream_options"] = {"include_usage": True}
 
@@ -147,6 +198,7 @@ class Client:
             else:
                 res = self._read_json(resp)
         res["elapsed"] = time.time() - start
+        res["server"] = self.server
         return res
 
     def _read_json(self, resp):
@@ -156,8 +208,10 @@ class Client:
         c = out["choices"][0]
         msg = c.get("message") or {}
         reasoning, content = split_think(msg.get("content") or "")
-        if msg.get("reasoning_content"):
-            reasoning = msg["reasoning_content"]
+        # sglang·구 vLLM 은 reasoning_content, Ollama·신 vLLM 은 reasoning
+        rc = (msg.get("reasoning_content") or "") + (msg.get("reasoning") or "")
+        if rc:
+            reasoning = rc.strip()
         if reasoning and not self.hide_think:
             sys.stderr.write("<think>\n%s\n</think>\n" % reasoning.strip())
             sys.stderr.flush()
@@ -184,7 +238,8 @@ class Client:
                 res["usage"] = chunk["usage"]
             for c in chunk.get("choices") or []:
                 d = c.get("delta") or {}
-                rc, cc = d.get("reasoning_content") or "", d.get("content") or ""
+                rc = (d.get("reasoning_content") or "") + (d.get("reasoning") or "")
+                cc = d.get("content") or ""
                 if res["ttft"] is None and (rc or cc):
                     res["ttft"] = time.time() - start
                 if rc:
@@ -216,7 +271,7 @@ class Client:
 
 
 def print_stats(r):
-    parts = ["소요 %.3fs" % r["elapsed"]]
+    parts = ["server=%s" % r["server"], "소요 %.3fs" % r["elapsed"]]
     if r.get("ttft"):
         parts.append("첫토큰 %.3fs" % r["ttft"])
     parts.append("추론 %d자" % len(r["reasoning"]))
@@ -235,7 +290,7 @@ def print_stats(r):
 
 def run_chat(cli, system, think):
     history = [{"role": "system", "content": system}]
-    sys.stderr.write("멀티턴 대화 모드. 명령: /think on|off|auto, /effort low|medium|high|none, /reset, /history, /quit\n")
+    sys.stderr.write("멀티턴 대화 모드. 명령: /think on|off|auto, /effort none|low|medium|high (값 없으면 안 보냄), /reset, /history, /quit\n")
     while True:
         sys.stderr.write("\n[턴 %d | think=%s] > " % (len(history) // 2 + 1, think))
         sys.stderr.flush()
@@ -258,12 +313,12 @@ def run_chat(cli, system, think):
                     sys.stderr.write("%-9s %s\n" % (m["role"] + ":", m["content"]))
             elif cmd == "/think":
                 try:
-                    think_kwargs(arg)
+                    parse_think(arg)
                     think = arg
                 except ValueError as e:
                     sys.stderr.write("%s\n" % e)
             elif cmd == "/effort":
-                cli.effort = "" if arg == "none" else arg
+                cli.effort = arg
                 sys.stderr.write("reasoning_effort=%r\n" % cli.effort)
             else:
                 sys.stderr.write("알 수 없는 명령: %s\n" % cmd)
@@ -381,9 +436,11 @@ def main():
     ap.add_argument("-stream", action="store_true", help="스트리밍 응답")
     ap.add_argument("-models", action="store_true", help="모델 목록만 조회")
     ap.add_argument("-timeout", type=float, default=300, help="요청 타임아웃(초)")
+    ap.add_argument("-server", default=conf("LLM_SERVER", "server", "auto"),
+                    help="서버 종류: auto(/v1/models 로 판별) / sglang / vllm / ollama / openai")
     ap.add_argument("-think", default=conf("LLM_THINK", "think", "auto"), help="thinking 모드: on / off / auto(서버 기본값)")
     ap.add_argument("-effort", default=conf("LLM_REASONING_EFFORT", "reasoning_effort", ""),
-                    help="reasoning_effort: low / medium / high (비우면 안 보냄)")
+                    help="reasoning_effort: none / low / medium / high (비우면 안 보냄, Ollama 는 none 으로 thinking 끔)")
     ap.add_argument("-hide-think", dest="hide_think", action="store_true", help="추론 과정(reasoning) 출력 숨김")
     ap.add_argument("-chat", action="store_true", help="대화형 멀티턴 모드")
     ap.add_argument("-scenario", default="", help="멀티턴 시나리오 JSON 파일 또는 폴더 (쉼표로 여러 개)")
@@ -394,11 +451,14 @@ def main():
     if not args.model and not args.models:
         sys.exit("ERROR: 모델명 없음. .env.toml 의 model 을 설정하세요")
     try:
-        think_kwargs(args.think)
+        parse_think(args.think)
+        args.server = normalize_server(args.server)
     except ValueError as e:
         sys.exit("ERROR: %s" % e)
 
     cli = Client(args)
+    if cli.server == "auto" and not args.models:
+        cli.detect_server()
     try:
         if args.models:
             cli.models()

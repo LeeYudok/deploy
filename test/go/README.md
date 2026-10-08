@@ -69,8 +69,9 @@ notepad .env.toml
 base_url = "http://<HOST>:<PORT>/v1"   # 실제 주소로 수정
 model = "deepseek-v4-flash-0731"
 api_key = ""                           # 필요한 경우만
+server = "auto"                        # sglang / vllm / ollama / openai
 think = "auto"                         # on / off / auto
-reasoning_effort = ""                  # low / medium / high
+reasoning_effort = ""                  # none / low / medium / high
 ```
 
 > 메모장에서 저장할 때 인코딩은 **UTF-8** 로 저장한다.
@@ -130,8 +131,9 @@ llmtest.exe -config D:\conf\llm.toml -p "다른 설정파일 사용"
 | `-stream` | | | 스트리밍 출력 |
 | `-models` | | | 모델 목록만 조회 |
 | `-timeout` | | | 요청 타임아웃 (300s) |
+| `-server` | `LLM_SERVER` | `server` | `auto`(기본, `/v1/models` 로 판별) / `sglang` / `vllm` / `ollama` / `openai` |
 | `-think` | `LLM_THINK` | `think` | `on` / `off` / `auto`(기본, 안 보냄) |
-| `-effort` | `LLM_REASONING_EFFORT` | `reasoning_effort` | `low` / `medium` / `high` (비우면 안 보냄) |
+| `-effort` | `LLM_REASONING_EFFORT` | `reasoning_effort` | `none` / `low` / `medium` / `high` (비우면 안 보냄) |
 | `-hide-think` | | | 추론 과정 출력 숨김 |
 | `-chat` | | | 대화형 멀티턴 모드 |
 | `-scenario` | | | 시나리오 JSON 파일·폴더 (쉼표로 여러 개) |

@@ -80,8 +80,9 @@ func main() {
 	stream := flag.Bool("stream", false, "스트리밍 응답")
 	models := flag.Bool("models", false, "모델 목록만 조회")
 	timeout := flag.Duration("timeout", 300*time.Second, "요청 타임아웃")
+	server := flag.String("server", conf("LLM_SERVER", "server", "auto"), "서버 종류: auto(/v1/models 로 판별) / sglang / vllm / ollama / openai")
 	think := flag.String("think", conf("LLM_THINK", "think", "auto"), "thinking 모드: on / off / auto(서버 기본값)")
-	effort := flag.String("effort", conf("LLM_REASONING_EFFORT", "reasoning_effort", ""), "reasoning_effort: low / medium / high (비우면 안 보냄)")
+	effort := flag.String("effort", conf("LLM_REASONING_EFFORT", "reasoning_effort", ""), "reasoning_effort: none / low / medium / high (비우면 안 보냄, Ollama 는 none 으로 thinking 끔)")
 	hideThink := flag.Bool("hide-think", false, "추론 과정(reasoning) 출력 숨김")
 	chatMode := flag.Bool("chat", false, "대화형 멀티턴 모드")
 	scenario := flag.String("scenario", "", "멀티턴 시나리오 JSON 파일 또는 폴더 (쉼표로 여러 개)")
@@ -90,7 +91,10 @@ func main() {
 	noOpen := flag.Bool("no-open", false, "웹 UI 실행 시 브라우저를 열지 않음")
 	flag.Parse()
 
-	if _, err := thinkKwargs(*think); err != nil {
+	if _, _, err := parseThink(*think); err != nil {
+		fail("%v", err)
+	}
+	if *server, err = normalizeServer(*server); err != nil {
 		fail("%v", err)
 	}
 
@@ -103,12 +107,13 @@ func main() {
 		MaxTokens: *maxTokens,
 		Stream:    *stream,
 		Effort:    *effort,
+		Server:    *server,
 	}
 
 	// 웹 UI 는 접속주소가 비어 있어도 띄운다 (화면에서 입력).
 	if *web {
 		settings := Settings{
-			BaseURL: *baseURL, Model: *model, APIKey: *apiKey, Think: *think, Effort: *effort,
+			BaseURL: *baseURL, Model: *model, APIKey: *apiKey, Server: *server, Think: *think, Effort: *effort,
 			Temperature: *temp, MaxTokens: *maxTokens, System: *system,
 		}
 		if err := runWeb(*addr, !*noOpen, cfgPath, cfg, settings, *timeout, *scenario); err != nil {
@@ -125,6 +130,15 @@ func main() {
 	}
 
 	ctx := context.Background()
+	if opt.Server == ServerAuto && !*models {
+		s, owner, derr := detectServer(ctx, opt)
+		opt.Server = s
+		if derr != nil {
+			fmt.Fprintf(os.Stderr, "[서버 판별 실패, openai 로 진행: %v]\n", derr)
+		} else {
+			fmt.Fprintf(os.Stderr, "[서버 %s (owned_by=%s)]\n", s, owner)
+		}
+	}
 	switch {
 	case *models:
 		var list []ModelInfo
@@ -188,7 +202,7 @@ func completeConsole(ctx context.Context, opt Options, hideThink bool, msgs []Me
 
 func printStats(r Result) {
 	var parts []string
-	parts = append(parts, fmt.Sprintf("소요 %s", r.Elapsed.Round(time.Millisecond)))
+	parts = append(parts, "server="+r.Server, fmt.Sprintf("소요 %s", r.Elapsed.Round(time.Millisecond)))
 	if r.TTFT > 0 {
 		parts = append(parts, fmt.Sprintf("첫토큰 %s", r.TTFT.Round(time.Millisecond)))
 	}
@@ -209,7 +223,7 @@ func printStats(r Result) {
 // runChat 은 표준입력으로 대화를 이어 가는 멀티턴 모드다.
 func runChat(ctx context.Context, opt Options, hideThink bool, system, think string) error {
 	history := []Message{{Role: "system", Content: system}}
-	fmt.Fprintln(os.Stderr, "멀티턴 대화 모드. 명령: /think on|off|auto, /effort low|medium|high|none, /reset, /history, /quit")
+	fmt.Fprintln(os.Stderr, "멀티턴 대화 모드. 명령: /think on|off|auto, /effort none|low|medium|high (값 없으면 안 보냄), /reset, /history, /quit")
 	in := bufio.NewScanner(os.Stdin)
 	in.Buffer(make([]byte, 1024*1024), 1024*1024)
 	for {
@@ -233,15 +247,12 @@ func runChat(ctx context.Context, opt Options, hideThink bool, system, think str
 					fmt.Fprintf(os.Stderr, "%-9s %s\n", m.Role+":", m.Content)
 				}
 			case "/think":
-				if _, err := thinkKwargs(arg); err != nil {
+				if _, _, err := parseThink(arg); err != nil {
 					fmt.Fprintln(os.Stderr, err)
 				} else {
 					think = arg
 				}
 			case "/effort":
-				if arg == "none" {
-					arg = ""
-				}
 				opt.Effort = arg
 				fmt.Fprintf(os.Stderr, "reasoning_effort=%q\n", opt.Effort)
 			default:

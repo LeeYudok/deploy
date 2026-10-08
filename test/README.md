@@ -32,7 +32,7 @@ notepad .env.toml
 | 모델 목록 | `llmtest.exe -models` | `python llmtest.py -models` |
 | 웹 UI | `llmtest.exe -web` (또는 `llmtest-web.bat` 더블클릭) | - |
 
-공통 플래그: `-stream`, `-think on|off|auto`, `-effort low|medium|high`, `-hide-think`, `-sys`, `-t`, `-max`, `-timeout`.
+공통 플래그: `-server auto|sglang|vllm|ollama|openai`, `-stream`, `-think on|off|auto`, `-effort none|low|medium|high`, `-hide-think`, `-sys`, `-t`, `-max`, `-timeout`.
 우선순위: **플래그 > 환경변수 > .env.toml**.
 
 ### 웹 UI (`-web`, Go 만)
@@ -53,7 +53,7 @@ notepad .env.toml
 | 명령 | 동작 |
 |---|---|
 | `/think on\|off\|auto` | 다음 턴부터 thinking 모드 변경 |
-| `/effort low\|medium\|high\|none` | reasoning_effort 변경 (`none` 은 안 보냄) |
+| `/effort none\|low\|medium\|high` | reasoning_effort 변경 (값 없이 `/effort` 만 치면 안 보냄) |
 | `/history` | 지금까지 보낸 대화 출력 |
 | `/reset` | 대화 기록 초기화 (system 만 남김) |
 | `/quit` | 종료 |
@@ -88,17 +88,25 @@ notepad .env.toml
   on/off 를 비교하려면 `think` 를 적지 않은 시나리오를 `-think on`, `-think off` 로 두 번 돌린다.
 - `expect`: 답변에 **모두** 들어 있어야 PASS (대소문자 무시). `"a|b"` 는 둘 중 하나만 있어도 된다.
 
-## thinking(추론) 조절
+## 서버 종류와 thinking(추론) 조절
 
-| 설정 | 요청에 들어가는 값 |
-|---|---|
-| `-think on` | `"chat_template_kwargs": {"thinking": true, "enable_thinking": true}` |
-| `-think off` | `"chat_template_kwargs": {"thinking": false, "enable_thinking": false}` |
-| `-think auto` (기본) | 안 보냄 → 서버·모델 기본값 |
-| `-effort high` | `"reasoning_effort": "high"` |
+thinking 을 켜고 끄는 요청 필드가 서버마다 다르다. `-server auto`(기본)는 시작할 때 `/v1/models` 의 `owned_by` 로 서버를 판별하고 거기에 맞춰 보낸다.
+판별 결과는 `[서버 sglang (owned_by=sglang)]` 처럼 출력되고, 턴마다 통계 줄에 `server=` 로 나온다.
 
-- 모델마다 채팅 템플릿 변수 이름이 달라서 두 이름을 같이 보낸다 (DeepSeek 계열 `thinking`, Qwen3·GLM 계열 `enable_thinking`). 템플릿이 쓰지 않는 변수는 무시된다.
+| 서버 | `owned_by` | `-think on` | `-think off` |
+|---|---|---|---|
+| sglang | `sglang` | `chat_template_kwargs: {"thinking": true, "enable_thinking": true}` | 같은 키를 `false` 로 |
+| vLLM | `vllm` | sglang 과 같음 | sglang 과 같음 |
+| Ollama | `library` | 보내지 않음 (기본이 thinking) | `reasoning_effort: "none"` |
+| 그 밖 | 그 외 | sglang 과 같음 | sglang 과 같음 |
+
+- `-think auto` 는 아무것도 보내지 않는다. **sglang 의 DeepSeek 계열(`--reasoning-parser deepseek-v3`)은 `thinking: true` 를 명시해야만 추론하므로 auto 는 thinking 꺼짐과 같다.** Qwen3·GLM 계열은 반대로 auto 가 켜짐이다 (sglang 0.5.10 `serving_chat.py` `_get_reasoning_from_request`).
+- 채팅 템플릿 변수는 모델마다 이름이 달라 두 개를 같이 보낸다 (DeepSeek·Kimi `thinking`, Qwen3·GLM `enable_thinking`). sglang 도 `reasoning_effort: "none"` 을 받으면 내부에서 이 두 키를 `false` 로 채운다. 템플릿이 쓰지 않는 변수는 무시된다.
+- `-effort none|low|medium|high` 는 `reasoning_effort` 를 그대로 보낸다. 직접 정하면 `-think off` 가 덮어쓰지 않는다. sglang 은 0.5.10 부터 `none` 을 받는다 (그 전 버전은 400 이 날 수 있다).
+- 판별이 틀리거나 `/v1/models` 가 막혀 있으면 `-server sglang` 처럼 직접 정한다 (`.env.toml` 의 `server`).
+- 추론 필드는 `reasoning_content`(sglang, 구 vLLM)와 `reasoning`(Ollama, 신 vLLM)을 둘 다 읽는다. reasoning parser 없이 답변에 `<think>` 가 섞여 와도 떼어 낸다 (`<think>` 를 프롬프트에 붙이는 sglang 처럼 여는 태그가 없어도 된다).
 - 추론 과정은 stderr 에 `<think> ... </think>` 로 출력하고 답변은 stdout 에 출력한다. `-hide-think` 로 숨긴다.
-- 서버가 `reasoning_content` 를 따로 주지 않고 답변에 `<think>` 태그를 섞어 보내도 떼어 낸다.
 - 멀티턴 히스토리에는 추론 과정을 넣지 않고 답변만 넣는다.
-- 턴마다 `[소요 | 첫토큰 | 추론 N자 | 토큰 prompt= completion= reasoning=]` 를 출력한다. `-think off` 인데 추론 글자 수가 0 이 아니면 서버가 thinking 끄기를 무시한 것이다.
+- 턴마다 `[server= | 소요 | 첫토큰 | 추론 N자 | 토큰 prompt= completion= reasoning=]` 를 출력한다. `-think off` 인데 추론 글자 수가 0 이 아니면 서버가 thinking 끄기를 무시한 것이다.
+
+실측 (2026-10-08, 맥 Ollama `qwen3.8:27b`): `-think off` 에서 추론 0자·completion 3 토큰, 시나리오 5개 24턴 모두 PASS.

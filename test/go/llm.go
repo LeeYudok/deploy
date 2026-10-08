@@ -45,11 +45,13 @@ type ChatResponse struct {
 	Choices []struct {
 		Message struct {
 			Content          string `json:"content"`
-			ReasoningContent string `json:"reasoning_content"`
+			ReasoningContent string `json:"reasoning_content"` // sglang, 구 vLLM
+			Reasoning        string `json:"reasoning"`         // Ollama, 신 vLLM
 		} `json:"message"`
 		Delta struct {
 			Content          string `json:"content"`
-			ReasoningContent string `json:"reasoning_content"`
+			ReasoningContent string `json:"reasoning_content"` // sglang, 구 vLLM
+			Reasoning        string `json:"reasoning"`         // Ollama, 신 vLLM
 		} `json:"delta"`
 		FinishReason string `json:"finish_reason"`
 	} `json:"choices"`
@@ -64,6 +66,7 @@ type Result struct {
 	Usage     *Usage
 	TTFT      time.Duration // 스트리밍일 때 첫 토큰까지 걸린 시간
 	Elapsed   time.Duration
+	Server    string // 요청을 맞춘 서버 종류
 }
 
 // Options 는 호출마다 공통으로 쓰는 설정이다.
@@ -76,6 +79,7 @@ type Options struct {
 	MaxTokens int
 	Stream    bool
 	Effort    string
+	Server    string // sglang / vllm / ollama / openai (auto 는 호출 전에 detectServer 로 정한다)
 }
 
 // Sink 는 응답 조각을 받는다. kind 는 "reasoning" 또는 "content".
@@ -96,7 +100,7 @@ type Turn struct {
 }
 
 // configKeys 는 .env.toml [llm] 섹션에 저장하는 키 순서다.
-var configKeys = []string{"base_url", "model", "api_key", "think", "reasoning_effort", "temperature", "max_tokens", "system"}
+var configKeys = []string{"base_url", "model", "api_key", "server", "think", "reasoning_effort", "temperature", "max_tokens", "system"}
 
 // loadToml 은 key = "value" 형태의 단순 TOML 을 읽는다.
 // [section] 이 있으면 키는 "section.key" 로 저장된다.
@@ -194,19 +198,86 @@ func findUp(name string, wantDir bool) string {
 	return ""
 }
 
-// thinkKwargs 는 thinking 모드를 chat_template_kwargs 로 바꾼다.
-// 모델마다 템플릿 변수 이름이 달라서 둘 다 보낸다 (DeepSeek: thinking, Qwen3/GLM: enable_thinking).
-// 템플릿이 쓰지 않는 변수는 무시된다.
-func thinkKwargs(mode string) (map[string]bool, error) {
-	switch strings.ToLower(mode) {
-	case "", "auto":
-		return nil, nil
-	case "on", "true", "1":
-		return map[string]bool{"thinking": true, "enable_thinking": true}, nil
-	case "off", "false", "0":
-		return map[string]bool{"thinking": false, "enable_thinking": false}, nil
+// 서버 종류. thinking 을 켜고 끄는 요청 필드가 서버마다 다르다.
+const (
+	ServerAuto   = "auto"
+	ServerSGLang = "sglang"
+	ServerVLLM   = "vllm"
+	ServerOllama = "ollama"
+	ServerOpenAI = "openai" // 그 밖의 OpenAI 호환 서버
+)
+
+func normalizeServer(s string) (string, error) {
+	switch v := strings.ToLower(strings.TrimSpace(s)); v {
+	case "":
+		return ServerAuto, nil
+	case ServerAuto, ServerSGLang, ServerVLLM, ServerOllama, ServerOpenAI:
+		return v, nil
 	}
-	return nil, fmt.Errorf("think 값은 on / off / auto 중 하나: %q", mode)
+	return "", fmt.Errorf("server 값은 auto / sglang / vllm / ollama / openai 중 하나: %q", s)
+}
+
+// serverFromOwner 는 /v1/models 의 owned_by 로 서버 종류를 정한다.
+// sglang 은 "sglang", vLLM 은 "vllm", Ollama 는 "library"(또는 네임스페이스) 를 준다.
+func serverFromOwner(owner string) string {
+	switch strings.ToLower(owner) {
+	case "sglang":
+		return ServerSGLang
+	case "vllm":
+		return ServerVLLM
+	case "library", "ollama":
+		return ServerOllama
+	}
+	return ServerOpenAI
+}
+
+// detectServer 는 /v1/models 를 불러 서버 종류를 정한다. 실패하면 openai 로 본다.
+func detectServer(ctx context.Context, opt Options) (server, owner string, err error) {
+	list, err := listModels(ctx, opt)
+	if err != nil {
+		return ServerOpenAI, "", err
+	}
+	for _, m := range list {
+		if m.ID == opt.Model || owner == "" {
+			owner = m.OwnedBy
+		}
+	}
+	return serverFromOwner(owner), owner, nil
+}
+
+// parseThink 는 thinking 모드 문자열을 읽는다. set 이 false 면 서버 기본값에 맡긴다.
+func parseThink(mode string) (on, set bool, err error) {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "", "auto":
+		return false, false, nil
+	case "on", "true", "1":
+		return true, true, nil
+	case "off", "false", "0":
+		return false, true, nil
+	}
+	return false, false, fmt.Errorf("think 값은 on / off / auto 중 하나: %q", mode)
+}
+
+// thinkParams 는 thinking 모드를 서버에 맞는 요청 필드로 바꾼다.
+//
+//   - sglang·vLLM·그 밖: chat_template_kwargs 에 thinking(DeepSeek·Kimi)과 enable_thinking(Qwen3·GLM)을
+//     함께 보낸다. sglang 도 reasoning_effort=none 을 받으면 이 두 키를 false 로 채운다.
+//     템플릿이 쓰지 않는 변수는 무시된다.
+//   - Ollama: OpenAI 호환 API 가 chat_template_kwargs 를 무시하므로 끌 때 reasoning_effort=none 을 보낸다.
+//
+// reasoning_effort 를 사용자가 정했으면 그 값을 그대로 둔다.
+func thinkParams(server, mode, effort string) (map[string]bool, string, error) {
+	on, set, err := parseThink(mode)
+	if err != nil || !set {
+		return nil, effort, err
+	}
+	if server == ServerOllama {
+		if !on && effort == "" {
+			effort = "none"
+		}
+		return nil, effort, nil
+	}
+	return map[string]bool{"thinking": on, "enable_thinking": on}, effort, nil
 }
 
 func newRequest(ctx context.Context, method, url, apiKey string, body []byte) (*http.Request, error) {
@@ -262,7 +333,7 @@ func listModels(ctx context.Context, opt Options) ([]ModelInfo, error) {
 
 // complete 는 messages 로 한 번 호출하고 응답 조각을 sink 로 넘긴다.
 func complete(ctx context.Context, opt Options, msgs []Message, think string, sink Sink) (Result, error) {
-	kw, err := thinkKwargs(think)
+	kw, effort, err := thinkParams(opt.Server, think, opt.Effort)
 	if err != nil {
 		return Result{}, err
 	}
@@ -273,7 +344,7 @@ func complete(ctx context.Context, opt Options, msgs []Message, think string, si
 		MaxTokens:          opt.MaxTokens,
 		Stream:             opt.Stream,
 		ChatTemplateKwargs: kw,
-		ReasoningEffort:    opt.Effort,
+		ReasoningEffort:    effort,
 	}
 	if opt.Stream {
 		r.StreamOptions = map[string]bool{"include_usage": true}
@@ -301,6 +372,7 @@ func complete(ctx context.Context, opt Options, msgs []Message, think string, si
 		res, err = readJSON(resp.Body, sink)
 	}
 	res.Elapsed = time.Since(start)
+	res.Server = opt.Server
 	return res, err
 }
 
@@ -314,8 +386,8 @@ func readJSON(body io.Reader, sink Sink) (Result, error) {
 	}
 	c := out.Choices[0]
 	reasoning, content := splitThink(c.Message.Content)
-	if c.Message.ReasoningContent != "" {
-		reasoning = strings.TrimSpace(c.Message.ReasoningContent)
+	if rc := c.Message.ReasoningContent + c.Message.Reasoning; rc != "" {
+		reasoning = strings.TrimSpace(rc)
 	}
 	if reasoning != "" {
 		sink("reasoning", reasoning)
@@ -346,12 +418,13 @@ func readStream(body io.Reader, sink Sink, start time.Time) (Result, error) {
 			res.Usage = chunk.Usage
 		}
 		for _, c := range chunk.Choices {
-			if res.TTFT == 0 && (c.Delta.Content != "" || c.Delta.ReasoningContent != "") {
+			rc := c.Delta.ReasoningContent + c.Delta.Reasoning
+			if res.TTFT == 0 && (c.Delta.Content != "" || rc != "") {
 				res.TTFT = time.Since(start)
 			}
-			if c.Delta.ReasoningContent != "" {
-				reasoning.WriteString(c.Delta.ReasoningContent)
-				sink("reasoning", c.Delta.ReasoningContent)
+			if rc != "" {
+				reasoning.WriteString(rc)
+				sink("reasoning", rc)
 			}
 			if c.Delta.Content != "" {
 				content.WriteString(c.Delta.Content)

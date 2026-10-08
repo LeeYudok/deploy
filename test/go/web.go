@@ -28,6 +28,7 @@ type Settings struct {
 	BaseURL     string  `json:"base_url"`
 	Model       string  `json:"model"`
 	APIKey      string  `json:"-"`
+	Server      string  `json:"server"`
 	Think       string  `json:"think"`
 	Effort      string  `json:"reasoning_effort"`
 	Temperature float64 `json:"temperature"`
@@ -41,7 +42,8 @@ type webServer struct {
 	cfgPath   string            // 저장할 .env.toml 경로
 	cfg       map[string]string // 읽은 설정 원본 (모르는 키를 보존하려고 둔다)
 	client    *http.Client
-	scenarios string // 시나리오 파일·폴더 (쉼표로 여러 개)
+	scenarios string            // 시나리오 파일·폴더 (쉼표로 여러 개)
+	detected  map[string]string // base_url → 판별한 서버 종류
 }
 
 func runWeb(addr string, open bool, cfgPath string, cfg map[string]string, s Settings, timeout time.Duration, scenarios string) error {
@@ -59,7 +61,7 @@ func runWeb(addr string, open bool, cfgPath string, cfg map[string]string, s Set
 	if abs, err := filepath.Abs(cfgPath); err == nil {
 		cfgPath = abs
 	}
-	ws := &webServer{settings: s, cfgPath: cfgPath, cfg: cfg, client: &http.Client{Timeout: timeout}, scenarios: scenarios}
+	ws := &webServer{settings: s, cfgPath: cfgPath, cfg: cfg, client: &http.Client{Timeout: timeout}, scenarios: scenarios, detected: map[string]string{}}
 
 	static, err := fs.Sub(webFiles, "web")
 	if err != nil {
@@ -183,7 +185,12 @@ func (ws *webServer) handleConfig(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusBadRequest, err)
 			return
 		}
-		if _, err := thinkKwargs(in.Think); err != nil {
+		if _, _, err := parseThink(in.Think); err != nil {
+			writeErr(w, http.StatusBadRequest, err)
+			return
+		}
+		var err error
+		if in.Server, err = normalizeServer(in.Server); err != nil {
 			writeErr(w, http.StatusBadRequest, err)
 			return
 		}
@@ -213,6 +220,7 @@ func (ws *webServer) handleConfig(w http.ResponseWriter, r *http.Request) {
 		llm["base_url"] = s.BaseURL
 		llm["model"] = s.Model
 		llm["api_key"] = s.APIKey
+		llm["server"] = s.Server
 		llm["think"] = s.Think
 		llm["reasoning_effort"] = s.Effort
 		llm["temperature"] = strconv.FormatFloat(s.Temperature, 'f', -1, 64)
@@ -307,6 +315,7 @@ func (ws *webServer) handleChat(w http.ResponseWriter, r *http.Request) {
 		Think       string    `json:"think"`
 		Effort      string    `json:"reasoning_effort"`
 		Stream      bool      `json:"stream"`
+		Server      string    `json:"server"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		writeErr(w, http.StatusBadRequest, err)
@@ -317,6 +326,14 @@ func (ws *webServer) handleChat(w http.ResponseWriter, r *http.Request) {
 	if opt.Base == "" || opt.Model == "" {
 		writeErr(w, http.StatusBadRequest, errors.New("접속주소와 모델명을 입력하세요"))
 		return
+	}
+	var err error
+	if opt.Server, err = normalizeServer(in.Server); err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	if opt.Server == ServerAuto {
+		opt.Server = ws.detect(r.Context(), opt)
 	}
 
 	flusher, _ := w.(http.Flusher)
@@ -344,5 +361,23 @@ func (ws *webServer) handleChat(w http.ResponseWriter, r *http.Request) {
 		"usage":      res.Usage,
 		"ttft_ms":    res.TTFT.Milliseconds(),
 		"elapsed_ms": res.Elapsed.Milliseconds(),
+		"server":     res.Server,
 	})
+}
+
+// detect 는 base_url 별로 서버 종류를 한 번만 판별해 둔다. 판별에 실패하면 저장하지 않고 다음에 다시 본다.
+func (ws *webServer) detect(ctx context.Context, opt Options) string {
+	ws.mu.Lock()
+	s, ok := ws.detected[opt.Base]
+	ws.mu.Unlock()
+	if ok {
+		return s
+	}
+	s, _, err := detectServer(ctx, opt)
+	if err == nil {
+		ws.mu.Lock()
+		ws.detected[opt.Base] = s
+		ws.mu.Unlock()
+	}
+	return s
 }
