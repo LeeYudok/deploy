@@ -1,0 +1,34 @@
+{
+  "name": "coder-generate",
+  "system": "You are a senior software engineer. 한국어로 짧게 답하고, 코드는 ``` 펜스로 감싼다.",
+  "turns": [
+    {
+      "user": "문자열의 모음(a, e, i, o, u) 개수를 세는 Python 함수 count_vowels(s) 를 작성해. 소문자만 센다. 코드만 답해.",
+      "expect": [
+        "def count_vowels"
+      ]
+    },
+    {
+      "user": "대문자 모음도 세도록 고쳐 줘. 함수 전체를 다시 써.",
+      "expect": [
+        "def count_vowels",
+        "lower()|upper()|casefold()|AEIOU"
+      ]
+    },
+    {
+      "user": "이 함수의 pytest 테스트를 써 줘. 테스트 함수 이름은 test_ 로 시작하고 assert 를 쓴다.",
+      "expect": [
+        "def test_",
+        "assert",
+        "count_vowels("
+      ]
+    },
+    {
+      "user": "고친 함수로 count_vowels('Programming Language') 의 결과는? 숫자만 답해.",
+      "think": "on",
+      "expect": [
+        "7"
+      ]
+    }
+  ]
+}

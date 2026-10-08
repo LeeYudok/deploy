@@ -1,0 +1,29 @@
+{
+  "name": "coder-sql",
+  "system": "You are a senior software engineer. 한국어로 짧게 답하고, 코드는 ``` 펜스로 감싼다. SQL 은 PostgreSQL 기준이다.",
+  "turns": [
+    {
+      "user": "테이블이 두 개 있어.\n\ncustomers(id bigint primary key, name text)\norders(id bigint primary key, customer_id bigint references customers(id), amount numeric, created_at timestamptz)\n\n2026년에 주문 금액 합계가 가장 큰 고객 3명의 이름과 합계를 구하는 SQL 을 써 줘.",
+      "expect": [
+        "join",
+        "sum(",
+        "group by",
+        "order by",
+        "limit 3|fetch first 3"
+      ]
+    },
+    {
+      "user": "같은 테이블에서 주문이 한 건도 없는 고객의 이름만 구하는 SQL 을 써 줘.",
+      "expect": [
+        "not exists|left join|not in|except"
+      ]
+    },
+    {
+      "user": "첫 번째 쿼리가 빠르도록 만들 인덱스 하나를 CREATE INDEX 문으로 써 줘.",
+      "expect": [
+        "create index",
+        "orders"
+      ]
+    }
+  ]
+}

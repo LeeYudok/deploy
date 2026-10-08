@@ -1,0 +1,32 @@
+{
+  "name": "coder-bugfix",
+  "system": "You are a senior software engineer. 한국어로 짧게 답하고, 코드는 ``` 펜스로 감싼다.",
+  "turns": [
+    {
+      "user": "다음 Go 함수는 슬라이스의 최댓값을 구하려고 만들었어.\n\n```go\nfunc maxOf(xs []int) int {\n\tm := 0\n\tfor i := 1; i < len(xs); i++ {\n\t\tif xs[i] > m {\n\t\t\tm = xs[i]\n\t\t}\n\t}\n\treturn m\n}\n```\n\n지금 코드로 maxOf([]int{42, 17, 29}) 는 무엇을 반환해? 숫자만 답해.",
+      "think": "on",
+      "expect": [
+        "29"
+      ]
+    },
+    {
+      "user": "버그를 고친 maxOf 함수 전체를 다시 써 줘. 슬라이스는 비어 있지 않다고 가정해.",
+      "expect": [
+        "func maxOf",
+        "xs[0]|math.MinInt"
+      ]
+    },
+    {
+      "user": "고친 함수로 maxOf([]int{-8, -3, -11}) 는? 숫자만 답해.",
+      "expect": [
+        "-3"
+      ]
+    },
+    {
+      "user": "고친 함수에 빈 슬라이스를 넣으면 어떻게 돼? 한 문장으로.",
+      "expect": [
+        "panic|index out of range|범위"
+      ]
+    }
+  ]
+}
