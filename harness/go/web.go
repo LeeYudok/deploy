@@ -45,6 +45,7 @@ type webServer struct {
 	scenarios string            // 시나리오 파일·폴더 (쉼표로 여러 개)
 	detected  map[string]string // base_url → 판별한 서버 종류
 	presets   []Preset          // .env.toml 의 [preset.*]
+	logs      *logBuf           // 로그 탭과 stdout
 }
 
 func runWeb(addr string, open bool, cfgPath string, cfg map[string]string, s Settings, timeout time.Duration, scenarios string) error {
@@ -62,7 +63,7 @@ func runWeb(addr string, open bool, cfgPath string, cfg map[string]string, s Set
 	if abs, err := filepath.Abs(cfgPath); err == nil {
 		cfgPath = abs
 	}
-	ws := &webServer{settings: s, cfgPath: cfgPath, cfg: cfg, client: &http.Client{Timeout: timeout}, scenarios: scenarios, detected: map[string]string{}, presets: presetsFrom(cfg)}
+	ws := &webServer{settings: s, cfgPath: cfgPath, cfg: cfg, client: &http.Client{Timeout: timeout}, scenarios: scenarios, detected: map[string]string{}, presets: presetsFrom(cfg), logs: &logBuf{boot: time.Now().Format("2006-01-02 15:04:05.000")}}
 
 	static, err := fs.Sub(webFiles, "web")
 	if err != nil {
@@ -74,6 +75,7 @@ func runWeb(addr string, open bool, cfgPath string, cfg map[string]string, s Set
 	mux.HandleFunc("/api/models", ws.handleModels)
 	mux.HandleFunc("/api/scenarios", ws.handleScenarios)
 	mux.HandleFunc("/api/chat", ws.handleChat)
+	mux.HandleFunc("/api/logs", ws.logs.handleLogs)
 
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
@@ -91,7 +93,8 @@ func runWeb(addr string, open bool, cfgPath string, cfg map[string]string, s Set
 	if open {
 		openBrowser(url)
 	}
-	srv := &http.Server{Handler: guard(mux, loopback), ReadHeaderTimeout: 10 * time.Second}
+	ws.logs.add("http", "info", "웹 UI 시작 "+url, "")
+	srv := &http.Server{Handler: guard(ws.logs.logHTTP(mux), loopback), ReadHeaderTimeout: 10 * time.Second}
 	return srv.Serve(ln)
 }
 
@@ -172,7 +175,7 @@ func (ws *webServer) storedKey(base, preset string) string {
 func (ws *webServer) options(c connReq) Options {
 	ws.mu.Lock()
 	defer ws.mu.Unlock()
-	o := Options{Client: ws.client, Base: strings.TrimRight(c.BaseURL, "/"), APIKey: c.APIKey}
+	o := Options{Client: ws.client, Base: strings.TrimRight(c.BaseURL, "/"), APIKey: c.APIKey, Trace: ws.logs.trace}
 	if o.Base == "" {
 		o.Base = strings.TrimRight(ws.settings.BaseURL, "/")
 	}

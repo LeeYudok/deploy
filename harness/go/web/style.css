@@ -363,6 +363,50 @@ button:focus-visible, .segmented label:focus-within { outline: 2px solid var(--a
 .sc-turns .msg { margin-top: 16px; }
 .sc-turns .turn-head { margin-top: 16px; font: 11px var(--mono); color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
 
+/* ---- 새 버전 배너 ---- */
+.update-bar {
+  position: absolute; top: 12px; left: 50%; transform: translateX(-50%); z-index: 5;
+  display: flex; align-items: center; gap: 10px; padding: 6px 6px 6px 14px;
+  background: var(--surface); border: 1px solid var(--accent); border-radius: 99px; box-shadow: var(--shadow);
+  font-size: 13px; animation: rise .25s ease-out;
+}
+.update-bar > span { display: inline-flex; align-items: center; gap: 6px; color: var(--accent); font-weight: 600; }
+.update-bar small { color: var(--muted); font-family: var(--mono); font-size: 11px; }
+.update-bar .btn { height: 28px; padding: 0 12px; border-radius: 99px; }
+
+/* ---- 로그 ---- */
+.logs { overflow-y: auto; }
+.logs-wrap { max-width: 1440px; margin: 0 auto; padding: 4px 20px 32px; }
+.muted-note { font-size: 12px; color: var(--muted); }
+.tab-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--fail); margin-left: 2px; }
+.loglist { margin-top: 12px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; font: 12px/1.5 var(--mono); }
+.loglist:empty::before { content: "아직 로그가 없습니다. 대화나 시나리오를 실행하면 여기에 쌓입니다."; display: block; padding: 18px 16px; color: var(--muted); font-family: var(--font); }
+.logrow { border-top: 1px solid var(--border); }
+.logrow:first-child { border-top: 0; }
+.logrow > summary, .logrow.plain {
+  display: grid; grid-template-columns: 96px 46px 1fr auto; gap: 10px; align-items: baseline;
+  padding: 7px 14px; list-style: none;
+}
+.logrow > summary { cursor: pointer; }
+.logrow > summary::-webkit-details-marker { display: none; }
+.logrow > summary:hover { background: var(--surface-2); }
+.logrow time { color: var(--muted); }
+.logrow .kind { font-weight: 600; color: var(--accent); text-transform: uppercase; }
+.logrow.kind-http .kind { color: var(--muted); }
+.logrow .sum { color: var(--text-2); word-break: break-word; }
+.logrow .caret { color: var(--muted); transition: transform .2s; }
+.logrow[open] .caret { transform: rotate(180deg); }
+.logrow.level-error { box-shadow: inset 3px 0 0 var(--fail); }
+.logrow.level-error .sum { color: var(--fail); }
+.logrow pre {
+  margin: 0 14px 12px; padding: 12px 14px; max-height: 460px; overflow: auto;
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-sm);
+  white-space: pre-wrap; word-break: break-word; color: var(--text-2);
+}
+.loglist[data-filter="llm"] .logrow:not(.kind-llm),
+.loglist[data-filter="http"] .logrow:not(.kind-http),
+.loglist[data-filter="error"] .logrow:not(.level-error) { display: none; }
+
 /* ---- 모바일 ---- */
 @media (max-width: 900px) {
   .app { grid-template-columns: 1fr; }
@@ -382,6 +426,9 @@ button:focus-visible, .segmented label:focus-within { outline: 2px solid var(--a
   .board-row .bar-cell { display: none; }
   .msg.user > div { max-width: 88%; }
   .segmented.small .seg-label { display: none; }
+  .logrow > summary, .logrow.plain { grid-template-columns: 1fr auto; }
+  .logrow time { grid-column: 1 / -1; }
+  .logrow .kind { display: none; }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }

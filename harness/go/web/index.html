@@ -48,22 +48,20 @@
           <span>접속주소</span>
           <input name="base_url" placeholder="http://HOST:PORT/v1" required spellcheck="false">
         </label>
-        <div class="row2">
-          <label class="field">
-            <span>서버</span>
-            <select name="server">
-              <option value="auto">자동 판별</option>
-              <option value="sglang">sglang</option>
-              <option value="vllm">vLLM</option>
-              <option value="ollama">Ollama</option>
-              <option value="openai">OpenAI 호환</option>
-            </select>
-          </label>
-          <label class="field">
-            <span>API 키</span>
-            <input name="api_key" type="password" placeholder="없음">
-          </label>
-        </div>
+        <label class="field">
+          <span>서버</span>
+          <select name="server">
+            <option value="auto">자동 판별</option>
+            <option value="sglang">sglang</option>
+            <option value="vllm">vLLM</option>
+            <option value="ollama">Ollama</option>
+            <option value="openai">OpenAI 호환</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>API 키</span>
+          <input name="api_key" type="password" placeholder="없음" autocomplete="off">
+        </label>
         <label class="check small" id="keyRow" hidden>
           <input type="checkbox" name="clear_api_key"> <span id="keyText">저장된 키 지우기</span>
         </label>
@@ -117,11 +115,18 @@
   </aside>
 
   <main class="main">
+    <div class="update-bar" id="updateBar" hidden>
+      <span data-icon="sparkle">새 버전이 배포됐습니다</span>
+      <small id="updateTime"></small>
+      <button type="button" class="btn primary" id="reloadBtn" data-icon="arrows-clockwise">새로고침</button>
+      <button type="button" class="icon-btn" id="updateClose" aria-label="닫기" data-icon="x"></button>
+    </div>
     <header class="topbar">
       <button type="button" class="icon-btn only-mobile" id="openSidebar" aria-label="설정 열기" data-icon="gear-six"></button>
       <nav class="segmented tabs" role="tablist" aria-label="화면">
         <button type="button" role="tab" data-tab="chat" aria-selected="true" data-icon="chat-circle-dots">대화</button>
         <button type="button" role="tab" data-tab="scenario" aria-selected="false" data-icon="list-checks">시나리오</button>
+        <button type="button" role="tab" data-tab="logs" aria-selected="false" data-icon="terminal-window">로그<span class="tab-dot" id="logDot" hidden></span></button>
       </nav>
       <div class="spacer"></div>
       <button type="button" class="btn ghost" id="resetChat" data-icon="arrow-counter-clockwise"><span class="label">새 대화</span></button>
@@ -170,6 +175,28 @@
         <div class="cards" id="scList"></div>
         <div id="scSummary"></div>
         <div id="scLog" class="sclog"></div>
+      </div>
+    </section>
+    <section id="tab-logs" class="tab logs" role="tabpanel" hidden>
+      <div class="logs-wrap">
+        <div class="toolbar">
+          <div class="segmented small" role="radiogroup" aria-label="로그 종류">
+            <label><input type="radio" name="logFilter" value="all" checked><span>전체</span></label>
+            <label><input type="radio" name="logFilter" value="llm"><span>LLM</span></label>
+            <label><input type="radio" name="logFilter" value="http"><span>HTTP</span></label>
+            <label><input type="radio" name="logFilter" value="error"><span>오류</span></label>
+          </div>
+          <span class="muted-note" id="logCount"></span>
+          <span class="spacer"></span>
+          <label class="switch">
+            <input type="checkbox" id="logFollow" checked>
+            <span class="track" aria-hidden="true"></span>
+            자동 스크롤
+          </label>
+          <button type="button" class="btn ghost" id="logClear" data-icon="trash">화면 비우기</button>
+        </div>
+        <p class="path">LLM 서버로 보낸 요청 JSON 과 응답 요약을 보여 줍니다. API 키는 헤더로만 보내서 여기에 나오지 않습니다. 같은 줄이 터미널에도 찍힙니다.</p>
+        <div class="loglist" id="logList" data-filter="all"></div>
       </div>
     </section>
   </main>

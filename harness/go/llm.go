@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -79,7 +80,36 @@ type Options struct {
 	MaxTokens int
 	Stream    bool
 	Effort    string
-	Server    string // sglang / vllm / ollama / openai (auto 는 호출 전에 detectServer 로 정한다)
+	Server    string      // sglang / vllm / ollama / openai (auto 는 호출 전에 detectServer 로 정한다)
+	Trace     func(Trace) // 있으면 업스트림 호출마다 부른다 (웹 UI 로그 탭)
+}
+
+// Trace 는 업스트림 호출 한 번의 기록이다. API 키는 헤더로만 보내므로 여기에 없다.
+type Trace struct {
+	Method  string
+	URL     string
+	Request []byte // 보낸 JSON 본문 (GET 은 없음)
+	Status  int    // HTTP 상태. 연결 실패면 0
+	Err     error
+	Elapsed time.Duration
+	Result  *Result // chat/completions 가 끝까지 읽혔을 때
+	Models  int     // /models 응답의 모델 수
+}
+
+// httpError 는 200 이 아닌 업스트림 응답이다. 본문 원문을 그대로 들고 있다.
+type httpError struct {
+	Status int
+	Body   string
+}
+
+func (e *httpError) Error() string { return fmt.Sprintf("HTTP %d: %s", e.Status, e.Body) }
+
+func statusOf(err error) int {
+	var he *httpError
+	if errors.As(err, &he) {
+		return he.Status
+	}
+	return 0
 }
 
 // Sink 는 응답 조각을 받는다. kind 는 "reasoning" 또는 "content".
@@ -378,7 +408,7 @@ func do(client *http.Client, req *http.Request) (*http.Response, error) {
 	if resp.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
-		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(b))
+		return nil, &httpError{Status: resp.StatusCode, Body: string(b)}
 	}
 	return resp, nil
 }
@@ -389,7 +419,17 @@ type ModelInfo struct {
 	MaxModelLen int    `json:"max_model_len"`
 }
 
-func listModels(ctx context.Context, opt Options) ([]ModelInfo, error) {
+func listModels(ctx context.Context, opt Options) (list []ModelInfo, err error) {
+	start := time.Now()
+	status := 0
+	if opt.Trace != nil {
+		defer func() {
+			if status == 0 {
+				status = statusOf(err)
+			}
+			opt.Trace(Trace{Method: http.MethodGet, URL: opt.Base + "/models", Status: status, Err: err, Elapsed: time.Since(start), Models: len(list)})
+		}()
+	}
 	req, err := newRequest(ctx, http.MethodGet, opt.Base+"/models", opt.APIKey, nil)
 	if err != nil {
 		return nil, err
@@ -398,6 +438,7 @@ func listModels(ctx context.Context, opt Options) ([]ModelInfo, error) {
 	if err != nil {
 		return nil, err
 	}
+	status = resp.StatusCode
 	defer resp.Body.Close()
 
 	var out struct {
@@ -410,7 +451,7 @@ func listModels(ctx context.Context, opt Options) ([]ModelInfo, error) {
 }
 
 // complete 는 messages 로 한 번 호출하고 응답 조각을 sink 로 넘긴다.
-func complete(ctx context.Context, opt Options, msgs []Message, think string, sink Sink) (Result, error) {
+func complete(ctx context.Context, opt Options, msgs []Message, think string, sink Sink) (_ Result, err error) {
 	kw, effort, err := thinkParams(opt.Server, think, opt.Effort)
 	if err != nil {
 		return Result{}, err
@@ -437,13 +478,27 @@ func complete(ctx context.Context, opt Options, msgs []Message, think string, si
 	}
 
 	start := time.Now()
+	status := 0
+	var res Result
+	if opt.Trace != nil {
+		defer func() {
+			if status == 0 {
+				status = statusOf(err)
+			}
+			t := Trace{Method: http.MethodPost, URL: opt.Base + "/chat/completions", Request: body, Status: status, Err: err, Elapsed: time.Since(start)}
+			if status == http.StatusOK {
+				t.Result = &res
+			}
+			opt.Trace(t)
+		}()
+	}
 	resp, err := do(opt.Client, req)
 	if err != nil {
 		return Result{}, err
 	}
+	status = resp.StatusCode
 	defer resp.Body.Close()
 
-	var res Result
 	if opt.Stream {
 		res, err = readStream(resp.Body, sink, start)
 	} else {

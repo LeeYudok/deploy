@@ -605,6 +605,62 @@ $("#scRun").addEventListener("click", async () => {
 
 $("#scStop").addEventListener("click", () => scAbort?.abort());
 
+// ---- 로그 탭 ----
+
+const logList = $("#logList");
+let logCursor = 0;
+let logShown = 0;
+let bootSeen = null;
+
+function logRow(e) {
+  const cls = `logrow kind-${e.kind} level-${e.level}`;
+  const head = [
+    el("time", { text: e.time.slice(11) , title: e.time }),
+    el("span", { class: "kind", text: e.kind }),
+    el("span", { class: "sum", text: e.summary }),
+  ];
+  if (!e.detail) return el("div", { class: cls + " plain" }, ...head, el("span"));
+  return el("details", { class: cls }, el("summary", {}, ...head, icon("caret-down", "caret")), el("pre", { text: e.detail }));
+}
+
+async function pollLogs() {
+  try {
+    let r = await api(`/api/logs?after=${logCursor}`);
+    if (bootSeen && r.boot !== bootSeen) {
+      // 서버가 다시 떴다 (새 버전 배포). 로그 번호가 1부터 다시 시작하므로 처음부터 받는다.
+      $("#updateTime").textContent = r.boot;
+      $("#updateBar").hidden = false;
+      logList.append(el("div", { class: "logrow kind-http level-info plain" },
+        el("time", { text: "──" }), el("span", { class: "kind", text: "boot" }), el("span", { class: "sum", text: `서버 재시작 ${r.boot}` }), el("span")));
+      logCursor = 0;
+      r = await api(`/api/logs?after=0`);
+    }
+    bootSeen = r.boot;
+    if (r.items.length) {
+      const nearBottom = logScroller.scrollHeight - logScroller.scrollTop - logScroller.clientHeight < 80;
+      logList.append(...r.items.map(logRow));
+      logCursor = r.items[r.items.length - 1].id;
+      logShown += r.items.length;
+      // 화면에 너무 많이 쌓이면 오래된 줄부터 지운다 (서버도 500건만 들고 있다).
+      while (logList.children.length > 500) logList.firstChild.remove();
+      $("#logCount").textContent = `${logList.children.length}줄`;
+      const logsOpen = !$("#tab-logs").hidden;
+      if (!logsOpen && r.items.some((e) => e.level === "error")) $("#logDot").hidden = false;
+      if (logsOpen && $("#logFollow").checked && nearBottom) logScroller.scrollTop = logScroller.scrollHeight;
+    }
+  } catch (e) { /* 서버가 내려가 있으면 다음 주기에 다시 본다 */ }
+  setTimeout(pollLogs, 1500);
+}
+const logScroller = $("#tab-logs");
+
+for (const r of $$("input[name=logFilter]")) {
+  r.addEventListener("change", () => { logList.dataset.filter = r.value; });
+}
+$("#reloadBtn").addEventListener("click", () => location.reload());
+$("#updateClose").addEventListener("click", () => { $("#updateBar").hidden = true; });
+$("#logClear").addEventListener("click", () => { logList.replaceChildren(); $("#logCount").textContent = ""; });
+$("#logFollow").addEventListener("change", (e) => { if (e.target.checked) logScroller.scrollTop = logScroller.scrollHeight; });
+
 // ---- 탭 ----
 
 function showTab(name) {
@@ -614,12 +670,17 @@ function showTab(name) {
     $("#tab-" + b.dataset.tab).hidden = !on;
   }
   $("#resetChat").hidden = name !== "chat";
+  if (name === "logs") {
+    $("#logDot").hidden = true;
+    if ($("#logFollow").checked) logScroller.scrollTop = logScroller.scrollHeight;
+  }
   store("tab", name);
 }
 for (const b of $$(".tabs button")) b.addEventListener("click", () => showTab(b.dataset.tab));
-showTab(store("tab") === "scenario" ? "scenario" : "chat");
+showTab(["scenario", "logs"].includes(store("tab")) ? store("tab") : "chat");
 
 renderEmpty();
+pollLogs();
 loadConfig()
   .then(() => refreshModels(true))
   .catch((err) => saveStatus("설정 불러오기 실패: " + err.message, "err"));
