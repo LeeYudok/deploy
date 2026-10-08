@@ -99,8 +99,9 @@ think = ""             # 고르면 thinking 도 이 값으로
 | `coder-generate.json` | 코드 생성·수정: 함수 작성 → 요구 추가 → pytest 작성 → 결과 계산 |
 | `coder-sql.json` | PostgreSQL 쿼리 작성 (집계·상위 N, 주문 없는 고객, 인덱스) |
 | `coder-json-format.json` | 컴파일 오류를 `{file, line, fix}` JSON 하나로만 답하는지 (thinking off) |
+| `coder-legacy-web.json` | 업무용 AI 코딩 도우미 수준: 가상의 레거시 웹 프레임워크 규약을 주고, 기존 목록 화면의 결함 짚기 → 상세·환산 화면 새로 쓰기 → 순수 함수 분리 → 환산값 계산 → 추가 수정(이전 영업일 재시도) → 재시도 날짜 계산. 코드 턴은 `reject` 로 jQuery·console·debugger·var·innerHTML 을 금지한다 |
 
-`coder-*` 는 사내 LLM 을 코딩 도우미로 쓸 때를 본다. 답이 하나로 정해지는 문제만 골랐지만, 검사는 기대 문자열이 들어 있는지만 보므로 코드를 실행해 맞는지까지는 확인하지 않는다.
+`coder-*` 는 사내 LLM 을 코딩 도우미로 쓸 때를 본다. 답이 하나로 정해지는 문제만 골랐지만, 검사는 문자열이 들어 있는지·없는지만 보므로 코드를 실행해 맞는지까지는 확인하지 않는다.
 
 형식:
 
@@ -121,6 +122,8 @@ think = ""             # 고르면 thinking 도 이 값으로
 - `think`: 시나리오 기본값. 턴의 `think` 가 있으면 그 턴만 바꾼다. 둘 다 없으면 `-think` 값을 쓴다.
   on/off 를 비교하려면 `think` 를 적지 않은 시나리오를 `-think on`, `-think off` 로 두 번 돌린다.
 - `expect`: 답변에 **모두** 들어 있어야 PASS (대소문자 무시). `"a|b"` 는 둘 중 하나만 있어도 된다.
+- `reject`: 답변 **코드**에 하나라도 있으면 FAIL (대소문자 무시, `"a|b"` 는 둘 중 하나라도 있으면). 답변에 코드 펜스(```` ``` ````)가 있으면 펜스 안만 보므로, 설명문에 "console.log 를 지웠다" 고 쓴 것은 걸리지 않는다. 펜스가 없으면 답변 전체를 본다. 예: `"reject": ["$(|jquery", "console.", "var "]`
+- `expect` 나 `reject` 가 있는 턴이 검사 1개다. 기록의 `results[]` 에는 `missing`(없던 기대 문자열)과 `found`(있던 금지 문자열)가 남는다.
 
 ## 토큰 비용 환산
 
