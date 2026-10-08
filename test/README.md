@@ -1,54 +1,17 @@
-# LLM 호출 테스트 (Go)
+# LLM 호출 테스트
 
-sglang 등 OpenAI 호환 API(`/v1/chat/completions`)를 호출하는 테스트 클라이언트.
-표준 라이브러리만 사용하므로 외부 모듈 다운로드 없이(폐쇄망에서도) 빌드된다.
+sglang 등 OpenAI 호환 API(`/v1/chat/completions`)를 언어별 클라이언트로 호출해 본다.
+두 클라이언트는 플래그·설정파일·시나리오 형식이 같다. 둘 다 표준 라이브러리만 써서 폐쇄망에서도 돈다.
 
-## Windows 64비트에서 바로 실행 (Go 설치 불필요)
-
-`bin/llmtest.exe` 는 미리 빌드한 Windows 64비트 실행파일이다(Go 1.27.1, CGO 없음).
-`bin` 폴더에 `.env.toml` 을 만들고 바로 실행한다.
-
-```bat
-cd test\bin
-copy ..\.env.toml.example .env.toml
-notepad .env.toml
-llmtest.exe -models
-llmtest.exe -p "안녕하세요"
+```
+test/
+├── .env.toml.example   공통 접속 설정 (복사해서 .env.toml 로 사용, git 에 안 올림)
+├── scenarios/          멀티턴 시나리오 (JSON, 언어별)
+├── go/                 Go 클라이언트 + Windows 실행파일(bin/llmtest.exe)  → go/README.md
+└── python/             Python 클라이언트 (3.8 이상)                       → python/README.md
 ```
 
-> 소스를 바꿨으면 아래 4번 또는 Linux/Mac 에서 다시 빌드해 `bin/llmtest.exe` 를 갱신한다:
-> `CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o bin/llmtest.exe .`
-
-## Windows 64비트에서 소스로 실행
-
-### 1. Go 설치
-
-**설치 없이 쓰기 (폐쇄망 권장)**: `bin/go1.27.1.windows-amd64.zip` 을 원하는 폴더(예: `D:\`)에 압축 해제하고 PATH 에 추가한다.
-`go.exe` 하나만 복사하면 빌드되지 않는다. 압축을 푼 `go` 폴더 전체(`pkg\tool`, `src` 포함)가 있어야 한다.
-
-```bat
-set PATH=D:\go\bin;%PATH%
-set GOTOOLCHAIN=local
-go version
-```
-
-무결성 확인: `certutil -hashfile go1.27.1.windows-amd64.zip SHA256` 결과가 `bin/SHA256SUMS` 와 같아야 한다.
-
-**설치판 쓰기**:
-
-1. https://go.dev/dl/ 에서 **`go1.xx.x.windows-amd64.msi`** 다운로드 (1.21 이상)
-   - 인터넷이 안 되는 PC는 다른 PC에서 받아서 옮긴 뒤 설치
-2. 설치 후 **새로 연** 명령 프롬프트에서 확인
-
-```bat
-go version
-```
-
-`go version go1.xx.x windows/amd64` 처럼 `windows/amd64` 가 나오면 된다.
-
-### 2. 접속 설정 (.env.toml)
-
-접속주소는 git 에 올리지 않는다. 예제 파일을 복사해서 직접 입력한다.
+## 접속 설정
 
 ```bat
 cd test
@@ -56,71 +19,74 @@ copy .env.toml.example .env.toml
 notepad .env.toml
 ```
 
-```toml
-[llm]
-base_url = "http://<HOST>:<PORT>/v1"   # 실제 주소로 수정
-model = "deepseek-v4-flash-0731"
-api_key = ""                           # 필요한 경우만
+`test/.env.toml` 하나를 두면 `go/`, `go/bin/`, `python/` 어디서 실행해도 찾는다
+(현재 폴더와 실행파일·스크립트 폴더에서 각각 상위 2단계까지 찾는다).
+
+## 실행 모드
+
+| 모드 | Go | Python |
+|---|---|---|
+| 한 번 호출 | `llmtest.exe -p "안녕"` | `python llmtest.py -p "안녕"` |
+| 대화형 멀티턴 | `llmtest.exe -chat` | `python llmtest.py -chat` |
+| 시나리오 멀티턴 | `llmtest.exe -scenario ..\..\scenarios` | `python llmtest.py -scenario ..\scenarios` |
+| 모델 목록 | `llmtest.exe -models` | `python llmtest.py -models` |
+
+공통 플래그: `-stream`, `-think on|off|auto`, `-effort low|medium|high`, `-hide-think`, `-sys`, `-t`, `-max`, `-timeout`.
+우선순위: **플래그 > 환경변수 > .env.toml**.
+
+### 대화형 멀티턴 (`-chat`)
+
+입력한 질문과 답변을 히스토리에 쌓아 매 턴 전체 대화를 보낸다. 대화 중 명령:
+
+| 명령 | 동작 |
+|---|---|
+| `/think on\|off\|auto` | 다음 턴부터 thinking 모드 변경 |
+| `/effort low\|medium\|high\|none` | reasoning_effort 변경 (`none` 은 안 보냄) |
+| `/history` | 지금까지 보낸 대화 출력 |
+| `/reset` | 대화 기록 초기화 (system 만 남김) |
+| `/quit` | 종료 |
+
+### 시나리오 멀티턴 (`-scenario`)
+
+`scenarios/*.json` 을 차례로 돌리고 턴마다 기대 문자열을 검사한다.
+마지막에 시나리오별 PASS/FAIL 표를 출력하고, 실패가 있으면 종료코드 2 로 끝난다(오류는 1).
+
+| 파일 | 내용 |
+|---|---|
+| `ko-memory.json` / `en-memory.json` / `ja-memory.json` / `zh-memory.json` | 이름·숫자를 기억하고, 값을 바꾼 뒤에도 최신 값으로 답하는지 (한·영·일·중) |
+| `ko-think-toggle.json` | 턴마다 thinking 을 켜고 끄면서 앞 턴 계산 결과를 이어 쓰는지 |
+
+형식:
+
+```json
+{
+  "name": "ko-memory",
+  "system": "한국어로 짧게 답변하세요.",
+  "think": "off",
+  "turns": [
+    {"user": "내 이름은 김민수야. 기억해 줘."},
+    {"user": "내 이름이 뭐였지?", "expect": ["김민수|민수"]},
+    {"user": "어려운 계산 문제 ...", "think": "on", "expect": ["31"]}
+  ]
+}
 ```
 
-> 메모장에서 저장할 때 인코딩은 **UTF-8** 로 저장한다.
+- `system`: 없으면 `-sys` 값을 쓴다.
+- `think`: 시나리오 기본값. 턴의 `think` 가 있으면 그 턴만 바꾼다. 둘 다 없으면 `-think` 값을 쓴다.
+  on/off 를 비교하려면 `think` 를 적지 않은 시나리오를 `-think on`, `-think off` 로 두 번 돌린다.
+- `expect`: 답변에 **모두** 들어 있어야 PASS (대소문자 무시). `"a|b"` 는 둘 중 하나만 있어도 된다.
 
-### 3. 실행
+## thinking(추론) 조절
 
-```bat
-go run . -models
-go run . -p "안녕하세요"
-go run . -stream -p "Go 언어 장점 3가지"
-```
+| 설정 | 요청에 들어가는 값 |
+|---|---|
+| `-think on` | `"chat_template_kwargs": {"thinking": true, "enable_thinking": true}` |
+| `-think off` | `"chat_template_kwargs": {"thinking": false, "enable_thinking": false}` |
+| `-think auto` (기본) | 안 보냄 → 서버·모델 기본값 |
+| `-effort high` | `"reasoning_effort": "high"` |
 
-### 4. exe 빌드 (64비트)
-
-```bat
-set GOOS=windows
-set GOARCH=amd64
-go build -o llmtest.exe .
-```
-
-PowerShell 이면:
-
-```powershell
-$env:GOOS="windows"; $env:GOARCH="amd64"
-go build -o llmtest.exe .
-```
-
-빌드된 `llmtest.exe` 는 Go 가 없는 PC에서도 실행된다.
-`.env.toml` 은 **exe 와 같은 폴더** 또는 실행하는 현재 폴더에 두면 된다.
-
-```bat
-llmtest.exe -models
-llmtest.exe -p "안녕하세요"
-llmtest.exe -config D:\conf\llm.toml -p "다른 설정파일 사용"
-```
-
-> Linux/Mac 에서 Windows 64비트용 exe 만들기:
-> `GOOS=windows GOARCH=amd64 go build -o llmtest.exe .`
-
-## 옵션
-
-| 플래그 | 환경변수 | .env.toml 키 | 기본값 / 설명 |
-|---|---|---|---|
-| `-url` | `LLM_BASE_URL` | `base_url` | 필수 |
-| `-model` | `LLM_MODEL` | `model` | 필수 (`-models` 조회 시 제외) |
-| `-key` | `LLM_API_KEY` | `api_key` | 있으면 `Authorization: Bearer` 헤더 추가 |
-| `-config` | | | 설정파일 경로 (기본: 현재 폴더 → exe 폴더의 `.env.toml`) |
-| `-p` | | | 사용자 프롬프트 |
-| `-sys` | | | 시스템 프롬프트 |
-| `-t` | | | temperature (0.7) |
-| `-max` | | | max_tokens (1024) |
-| `-stream` | | | 스트리밍 출력 |
-| `-models` | | | 모델 목록만 조회 |
-| `-timeout` | | | 요청 타임아웃 (300s) |
-
-우선순위: **플래그 > 환경변수 > .env.toml**
-
-## 문제 해결
-
-- **한글이 깨짐**: 명령 프롬프트에서 `chcp 65001` 실행 후 다시 실행
-- **`ERROR: 접속주소 없음`**: `.env.toml` 이 현재 폴더나 exe 폴더에 없거나 `base_url` 이 비어 있음
-- **연결 시간 초과 / 거부**: 사내망 연결, 프록시 설정(`set HTTP_PROXY=` 로 해제) 확인
-- **`'go'은(는) ... 아닙니다`**: Go 설치 후 명령 프롬프트를 새로 열었는지 확인
+- 모델마다 채팅 템플릿 변수 이름이 달라서 두 이름을 같이 보낸다 (DeepSeek 계열 `thinking`, Qwen3·GLM 계열 `enable_thinking`). 템플릿이 쓰지 않는 변수는 무시된다.
+- 추론 과정은 stderr 에 `<think> ... </think>` 로 출력하고 답변은 stdout 에 출력한다. `-hide-think` 로 숨긴다.
+- 서버가 `reasoning_content` 를 따로 주지 않고 답변에 `<think>` 태그를 섞어 보내도 떼어 낸다.
+- 멀티턴 히스토리에는 추론 과정을 넣지 않고 답변만 넣는다.
+- 턴마다 `[소요 | 첫토큰 | 추론 N자 | 토큰 prompt= completion= reasoning=]` 를 출력한다. `-think off` 인데 추론 글자 수가 0 이 아니면 서버가 thinking 끄기를 무시한 것이다.

@@ -1,4 +1,5 @@
-llmtest
-*.exe
 .env.toml
-!bin/llmtest.exe
+*.exe
+!go/bin/llmtest.exe
+go/llmtest
+__pycache__/
