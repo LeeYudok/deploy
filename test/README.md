@@ -1,0 +1,97 @@
+# LLM 호출 테스트 (Go)
+
+sglang 등 OpenAI 호환 API(`/v1/chat/completions`)를 호출하는 테스트 클라이언트.
+표준 라이브러리만 사용하므로 외부 모듈 다운로드 없이(폐쇄망에서도) 빌드된다.
+
+## Windows 64비트에서 실행
+
+### 1. Go 설치
+
+1. https://go.dev/dl/ 에서 **`go1.xx.x.windows-amd64.msi`** 다운로드 (1.21 이상)
+   - 인터넷이 안 되는 PC는 다른 PC에서 받아서 옮긴 뒤 설치
+2. 설치 후 **새로 연** 명령 프롬프트에서 확인
+
+```bat
+go version
+```
+
+`go version go1.xx.x windows/amd64` 처럼 `windows/amd64` 가 나오면 된다.
+
+### 2. 접속 설정 (.env.toml)
+
+접속주소는 git 에 올리지 않는다. 예제 파일을 복사해서 직접 입력한다.
+
+```bat
+cd test
+copy .env.toml.example .env.toml
+notepad .env.toml
+```
+
+```toml
+[llm]
+base_url = "http://<HOST>:<PORT>/v1"   # 실제 주소로 수정
+model = "deepseek-v4-flash-0731"
+api_key = ""                           # 필요한 경우만
+```
+
+> 메모장에서 저장할 때 인코딩은 **UTF-8** 로 저장한다.
+
+### 3. 실행
+
+```bat
+go run . -models
+go run . -p "안녕하세요"
+go run . -stream -p "Go 언어 장점 3가지"
+```
+
+### 4. exe 빌드 (64비트)
+
+```bat
+set GOOS=windows
+set GOARCH=amd64
+go build -o llmtest.exe .
+```
+
+PowerShell 이면:
+
+```powershell
+$env:GOOS="windows"; $env:GOARCH="amd64"
+go build -o llmtest.exe .
+```
+
+빌드된 `llmtest.exe` 는 Go 가 없는 PC에서도 실행된다.
+`.env.toml` 은 **exe 와 같은 폴더** 또는 실행하는 현재 폴더에 두면 된다.
+
+```bat
+llmtest.exe -models
+llmtest.exe -p "안녕하세요"
+llmtest.exe -config D:\conf\llm.toml -p "다른 설정파일 사용"
+```
+
+> Linux/Mac 에서 Windows 64비트용 exe 만들기:
+> `GOOS=windows GOARCH=amd64 go build -o llmtest.exe .`
+
+## 옵션
+
+| 플래그 | 환경변수 | .env.toml 키 | 기본값 / 설명 |
+|---|---|---|---|
+| `-url` | `LLM_BASE_URL` | `base_url` | 필수 |
+| `-model` | `LLM_MODEL` | `model` | 필수 (`-models` 조회 시 제외) |
+| `-key` | `LLM_API_KEY` | `api_key` | 있으면 `Authorization: Bearer` 헤더 추가 |
+| `-config` | | | 설정파일 경로 (기본: 현재 폴더 → exe 폴더의 `.env.toml`) |
+| `-p` | | | 사용자 프롬프트 |
+| `-sys` | | | 시스템 프롬프트 |
+| `-t` | | | temperature (0.7) |
+| `-max` | | | max_tokens (1024) |
+| `-stream` | | | 스트리밍 출력 |
+| `-models` | | | 모델 목록만 조회 |
+| `-timeout` | | | 요청 타임아웃 (300s) |
+
+우선순위: **플래그 > 환경변수 > .env.toml**
+
+## 문제 해결
+
+- **한글이 깨짐**: 명령 프롬프트에서 `chcp 65001` 실행 후 다시 실행
+- **`ERROR: 접속주소 없음`**: `.env.toml` 이 현재 폴더나 exe 폴더에 없거나 `base_url` 이 비어 있음
+- **연결 시간 초과 / 거부**: 사내망 연결, 프록시 설정(`set HTTP_PROXY=` 로 해제) 확인
+- **`'go'은(는) ... 아닙니다`**: Go 설치 후 명령 프롬프트를 새로 열었는지 확인
