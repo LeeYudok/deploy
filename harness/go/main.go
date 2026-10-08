@@ -106,6 +106,7 @@ func main() {
 	web := flag.Bool("web", false, "웹 UI 실행 (설정 변경·대화·시나리오)")
 	addr := flag.String("addr", defaultAddr, "웹 UI 주소 (-web 일 때)")
 	noOpen := flag.Bool("no-open", false, "웹 UI 실행 시 브라우저를 열지 않음")
+	noRecord := flag.Bool("no-record", false, "실행 기록(runs/*.jsonl)을 남기지 않음")
 	flag.Parse()
 
 	if presetID != "" {
@@ -151,6 +152,10 @@ func main() {
 		fail("모델명 없음. .env.toml 의 model 을 설정하세요")
 	}
 
+	if !*noRecord && !*models {
+		cliRuns = newRunStore(runsDir(), nil)
+		cliSession = newSession()
+	}
 	ctx := context.Background()
 	if opt.Server == ServerAuto && !*models {
 		s, owner, derr := detectServer(ctx, opt)
@@ -179,12 +184,31 @@ func main() {
 	default:
 		msgs := []Message{{Role: "system", Content: *system}, {Role: "user", Content: *prompt}}
 		var r Result
-		if r, err = completeConsole(ctx, opt, *hideThink, msgs, *think); err == nil {
+		r, err = completeConsole(ctx, opt, *hideThink, msgs, *think)
+		recordTurn(opt, *think, msgs, r, err, "", 0)
+		if err == nil {
 			printStats(r)
 		}
 	}
 	if err != nil {
 		fail("%v", err)
+	}
+}
+
+// CLI 실행 기록. -no-record 면 nil 이다.
+var (
+	cliRuns    *runStore
+	cliSession string
+)
+
+func recordTurn(opt Options, think string, msgs []Message, r Result, err error, scenario string, turn int) {
+	if cliRuns == nil {
+		return
+	}
+	rec := turnRecord("cli", cliSession, opt, think, msgs, r, err)
+	rec.Scenario, rec.Turn = scenario, turn
+	if werr := cliRuns.append(rec); werr != nil {
+		fmt.Fprintln(os.Stderr, "기록 쓰기 실패:", werr)
 	}
 }
 
@@ -288,6 +312,7 @@ func runChat(ctx context.Context, opt Options, hideThink bool, system, think str
 		}
 		history = append(history, Message{Role: "user", Content: line})
 		r, err := completeConsole(ctx, opt, hideThink, history, think)
+		recordTurn(opt, think, history, r, err, "", 0)
 		if err != nil {
 			history = history[:len(history)-1]
 			fmt.Fprintln(os.Stderr, "ERROR:", err)
@@ -306,10 +331,11 @@ func runScenarios(ctx context.Context, opt Options, hideThink bool, spec, defaul
 		return 0, err
 	}
 	type row struct {
-		name         string
-		turns, fails int
-		elapsed      time.Duration
-		note         string
+		name                       string
+		turns, done, checks, fails int
+		elapsed                    time.Duration
+		note                       string
+		results                    []CheckResult
 	}
 	var rows []row
 	totalFails := 0
@@ -338,17 +364,33 @@ func runScenarios(ctx context.Context, opt Options, hideThink bool, spec, defaul
 			fmt.Printf("\n=== [%s] 턴 %d/%d (think=%s) ===\nUSER: %s\nASSISTANT: ", sc.Name, i+1, len(sc.Turns), think, t.User)
 			history = append(history, Message{Role: "user", Content: t.User})
 			r, err := completeConsole(ctx, opt, hideThink, history, think)
+			recordTurn(opt, think, history, r, err, sc.Name, i+1)
 			if err != nil {
-				rw.fails += len(sc.Turns) - i
+				left := 0
+				for _, x := range sc.Turns[i:] {
+					if len(x.Expect) > 0 {
+						left++
+					}
+				}
+				if left == 0 {
+					left = 1 // 검사가 남지 않았어도 호출 오류는 실패로 센다
+				}
+				rw.checks += left
+				rw.fails += left
+				rw.results = append(rw.results, CheckResult{Turn: i + 1, Missing: []string{"(호출 오류)"}})
 				rw.note = err.Error()
 				fmt.Fprintln(os.Stderr, "ERROR:", err)
 				break
 			}
 			printStats(r)
 			rw.elapsed += r.Elapsed
+			rw.done++
 			history = append(history, Message{Role: "assistant", Content: r.Content})
 			if len(t.Expect) > 0 {
-				if miss := checkExpect(r.Content, t.Expect); len(miss) > 0 {
+				miss := checkExpect(r.Content, t.Expect)
+				rw.checks++
+				rw.results = append(rw.results, CheckResult{Turn: i + 1, Expect: t.Expect, Missing: miss})
+				if len(miss) > 0 {
 					rw.fails++
 					fmt.Printf("CHECK: FAIL (없음: %s)\n", strings.Join(miss, ", "))
 				} else {
@@ -358,6 +400,19 @@ func runScenarios(ctx context.Context, opt Options, hideThink bool, spec, defaul
 		}
 		totalFails += rw.fails
 		rows = append(rows, rw)
+		if cliRuns != nil {
+			think := defaultThink
+			if sc.Think != "" {
+				think = "scenario"
+			}
+			rec := ScenarioRecord{Type: "scenario", Time: time.Now().Format(timeFmt), Source: "cli", Session: cliSession,
+				Name: sc.Name, BaseURL: opt.Base, Model: opt.Model, Server: opt.Server, Think: think,
+				Turns: rw.turns, Done: rw.done, Checks: rw.checks, Fails: rw.fails, ElapsedMs: rw.elapsed.Milliseconds(),
+				Note: rw.note, Results: rw.results}
+			if werr := cliRuns.append(rec); werr != nil {
+				fmt.Fprintln(os.Stderr, "기록 쓰기 실패:", werr)
+			}
+		}
 	}
 
 	fmt.Println("\n=== 결과 ===")

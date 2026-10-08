@@ -126,6 +126,7 @@
       <nav class="segmented tabs" role="tablist" aria-label="화면">
         <button type="button" role="tab" data-tab="chat" aria-selected="true" data-icon="chat-circle-dots">대화</button>
         <button type="button" role="tab" data-tab="scenario" aria-selected="false" data-icon="list-checks">시나리오</button>
+        <button type="button" role="tab" data-tab="history" aria-selected="false" data-icon="clock-counter-clockwise">기록</button>
         <button type="button" role="tab" data-tab="logs" aria-selected="false" data-icon="terminal-window">로그<span class="tab-dot" id="logDot" hidden></span></button>
       </nav>
       <div class="spacer"></div>
@@ -177,6 +178,34 @@
         <div id="scLog" class="sclog"></div>
       </div>
     </section>
+    <section id="tab-history" class="tab history" role="tabpanel" hidden>
+      <div class="logs-wrap">
+        <div class="toolbar">
+          <div class="segmented small" role="radiogroup" aria-label="기간">
+            <label><input type="radio" name="histDays" value="1"><span>오늘</span></label>
+            <label><input type="radio" name="histDays" value="7" checked><span>7일</span></label>
+            <label><input type="radio" name="histDays" value="30"><span>30일</span></label>
+            <label><input type="radio" name="histDays" value="0"><span>전체</span></label>
+          </div>
+          <label class="inline-field">모델
+            <select id="histModel"><option value="">전체</option></select>
+          </label>
+          <label class="inline-field">출처
+            <select id="histSource">
+              <option value="">전체</option>
+              <option value="web-chat">웹 대화</option>
+              <option value="web-scenario">웹 시나리오</option>
+              <option value="cli">CLI</option>
+            </select>
+          </label>
+          <span class="spacer"></span>
+          <button type="button" class="btn ghost" id="histReload" data-icon="arrows-clockwise">새로고침</button>
+        </div>
+        <p class="path" id="histDir"></p>
+        <div id="histBody"></div>
+      </div>
+    </section>
+
     <section id="tab-logs" class="tab logs" role="tabpanel" hidden>
       <div class="logs-wrap">
         <div class="toolbar">

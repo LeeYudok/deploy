@@ -374,6 +374,26 @@ button:focus-visible, .segmented label:focus-within { outline: 2px solid var(--a
 .update-bar small { color: var(--muted); font-family: var(--mono); font-size: 11px; }
 .update-bar .btn { height: 28px; padding: 0 12px; border-radius: 99px; }
 
+/* ---- 기록 ---- */
+.history { overflow-y: auto; }
+.inline-field { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+.inline-field select { width: auto; padding: 4px 8px; font-size: 12px; }
+.section-title { display: flex; align-items: center; gap: 6px; margin: 22px 0 8px; font-size: 13px; font-weight: 600; color: var(--text-2); }
+.dtable-wrap { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow-x: auto; }
+.dtable { width: 100%; border-collapse: collapse; font-size: 13px; }
+.dtable th, .dtable td { padding: 9px 14px; text-align: left; white-space: nowrap; border-top: 1px solid var(--border); }
+.dtable thead th { border-top: 0; background: var(--surface-2); color: var(--muted); font-size: 12px; font-weight: 600; }
+.dtable td.num, .dtable th.num { text-align: right; font-family: var(--mono); font-size: 12px; }
+.dtable td.wrap { white-space: normal; max-width: 520px; color: var(--text-2); }
+.dtable tbody tr:hover { background: var(--surface-2); }
+.rate { display: inline-flex; align-items: center; gap: 8px; min-width: 140px; }
+.rate .bar { flex: 1; }
+.empty-note { padding: 18px 16px; color: var(--muted); }
+.turn-detail td { white-space: normal; background: var(--surface-2); }
+.turn-detail pre { margin: 6px 0 0; white-space: pre-wrap; word-break: break-word; font: 12px/1.5 var(--mono); color: var(--text-2); }
+.turn-detail b { font-size: 12px; color: var(--muted); }
+.dtable tr.clickable { cursor: pointer; }
+
 /* ---- 로그 ---- */
 .logs { overflow-y: auto; }
 .logs-wrap { max-width: 1440px; margin: 0 auto; padding: 4px 20px 32px; }
@@ -398,6 +418,8 @@ button:focus-visible, .segmented label:focus-within { outline: 2px solid var(--a
 .logrow[open] .caret { transform: rotate(180deg); }
 .logrow.level-error { box-shadow: inset 3px 0 0 var(--fail); }
 .logrow.level-error .sum { color: var(--fail); }
+.logrow.level-warn { box-shadow: inset 3px 0 0 var(--warn); }
+.logrow.level-warn .sum { color: var(--warn); }
 .logrow pre {
   margin: 0 14px 12px; padding: 12px 14px; max-height: 460px; overflow: auto;
   background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-sm);
@@ -405,7 +427,7 @@ button:focus-visible, .segmented label:focus-within { outline: 2px solid var(--a
 }
 .loglist[data-filter="llm"] .logrow:not(.kind-llm),
 .loglist[data-filter="http"] .logrow:not(.kind-http),
-.loglist[data-filter="error"] .logrow:not(.level-error) { display: none; }
+.loglist[data-filter="error"] .logrow:not(.level-error):not(.level-warn) { display: none; }
 
 /* ---- 모바일 ---- */
 @media (max-width: 900px) {

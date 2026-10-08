@@ -46,6 +46,7 @@ type webServer struct {
 	detected  map[string]string // base_url → 판별한 서버 종류
 	presets   []Preset          // .env.toml 의 [preset.*]
 	logs      *logBuf           // 로그 탭과 stdout
+	runs      *runStore         // 실행 기록 (runs/*.jsonl)
 }
 
 func runWeb(addr string, open bool, cfgPath string, cfg map[string]string, s Settings, timeout time.Duration, scenarios string) error {
@@ -65,6 +66,7 @@ func runWeb(addr string, open bool, cfgPath string, cfg map[string]string, s Set
 	}
 	ws := &webServer{settings: s, cfgPath: cfgPath, cfg: cfg, client: &http.Client{Timeout: timeout}, scenarios: scenarios, detected: map[string]string{}, presets: presetsFrom(cfg), logs: &logBuf{boot: time.Now().Format("2006-01-02 15:04:05.000")}}
 
+	ws.runs = newRunStore(runsDir(), func(msg string) { ws.logs.add("runs", "warn", msg, "") })
 	static, err := fs.Sub(webFiles, "web")
 	if err != nil {
 		return err
@@ -76,6 +78,8 @@ func runWeb(addr string, open bool, cfgPath string, cfg map[string]string, s Set
 	mux.HandleFunc("/api/scenarios", ws.handleScenarios)
 	mux.HandleFunc("/api/chat", ws.handleChat)
 	mux.HandleFunc("/api/logs", ws.logs.handleLogs)
+	mux.HandleFunc("/api/runs", ws.handleRuns)
+	mux.HandleFunc("/api/runs/scenario", ws.handleRunScenario)
 
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
@@ -363,6 +367,12 @@ func (ws *webServer) handleChat(w http.ResponseWriter, r *http.Request) {
 		Effort      string    `json:"reasoning_effort"`
 		Stream      bool      `json:"stream"`
 		Server      string    `json:"server"`
+		Meta        struct {
+			Source   string `json:"source"` // web-chat | web-scenario
+			Session  string `json:"session"`
+			Scenario string `json:"scenario"`
+			Turn     int    `json:"turn"`
+		} `json:"meta"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		writeErr(w, http.StatusBadRequest, err)
@@ -395,6 +405,18 @@ func (ws *webServer) handleChat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	res, err := complete(r.Context(), opt, in.Messages, in.Think, func(kind, text string) { send(kind, text) })
+	if !errors.Is(err, context.Canceled) {
+		// 중지한 턴은 남기지 않는다. 오류도 기록해 두면 서버별 실패율을 볼 수 있다.
+		src := in.Meta.Source
+		if src == "" {
+			src = "web-chat"
+		}
+		rec := turnRecord(src, in.Meta.Session, opt, in.Think, in.Messages, res, err)
+		rec.Scenario, rec.Turn = in.Meta.Scenario, in.Meta.Turn
+		if werr := ws.runs.append(rec); werr != nil {
+			ws.logs.add("runs", "error", "기록 쓰기 실패: "+werr.Error(), "")
+		}
+	}
 	if err != nil {
 		if !errors.Is(err, context.Canceled) {
 			send("error", err.Error())
@@ -427,4 +449,49 @@ func (ws *webServer) detect(ctx context.Context, opt Options) string {
 		ws.mu.Unlock()
 	}
 	return s
+}
+
+// handleRuns 는 최근 실행 기록을 준다. days=0 이면 전부.
+func (ws *webServer) handleRuns(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	days, err := strconv.Atoi(r.URL.Query().Get("days"))
+	if err != nil || days < 0 {
+		days = 7
+	}
+	items, err := ws.runs.load(days)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	if items == nil {
+		items = []json.RawMessage{}
+	}
+	dir, _ := filepath.Abs(ws.runs.dir)
+	writeJSON(w, http.StatusOK, map[string]any{"dir": dir, "items": items})
+}
+
+// handleRunScenario 는 화면이 돌린 시나리오의 요약을 기록한다 (턴은 handleChat 이 남긴다).
+func (ws *webServer) handleRunScenario(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	var rec ScenarioRecord
+	if err := json.NewDecoder(r.Body).Decode(&rec); err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	rec.Type = "scenario"
+	rec.Time = time.Now().Format(timeFmt)
+	if rec.Source == "" {
+		rec.Source = "web-scenario"
+	}
+	if err := ws.runs.append(rec); err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }

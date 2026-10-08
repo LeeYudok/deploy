@@ -298,7 +298,8 @@ function assistantView(container, think) {
 
 // ---- 한 턴 호출 (SSE) ----
 
-async function callTurn(messages, think, view, signal) {
+// meta 는 실행 기록용이다: { source, session, scenario, turn }
+async function callTurn(messages, think, view, signal, meta = {}) {
   const v = formValues();
   const res = await fetch("/api/chat", {
     method: "POST",
@@ -307,7 +308,7 @@ async function callTurn(messages, think, view, signal) {
       base_url: v.base_url, api_key: v.api_key, model: v.model, server: v.server, preset: v.preset,
       temperature: v.temperature, max_tokens: v.max_tokens,
       reasoning_effort: v.reasoning_effort, stream: v.stream,
-      think, messages,
+      think, messages, meta,
     }),
     signal,
   });
@@ -353,6 +354,13 @@ const chatLog = $("#chatLog");
 const composer = $("#composer");
 const q = composer.elements.q;
 let history = [];
+let chatSession = newSession();
+
+function newSession() {
+  const b = new Uint8Array(4);
+  crypto.getRandomValues(b);
+  return [...b].map((x) => x.toString(16).padStart(2, "0")).join("");
+}
 let chatAbort = null;
 
 const SUGGESTIONS = [
@@ -426,7 +434,7 @@ composer.addEventListener("submit", async (e) => {
       reasoning: (t) => { view.reasoning(t); scrollChat(); },
       content: (t) => { view.content(t); scrollChat(); },
       finish: view.finish,
-    }, chatAbort.signal);
+    }, chatAbort.signal, { source: "web-chat", session: chatSession });
     // 추론 과정은 히스토리에 넣지 않는다.
     history.push({ role: "user", content: text }, { role: "assistant", content: r.content });
     updateTurns();
@@ -446,6 +454,7 @@ $("#stopChat").addEventListener("click", () => chatAbort?.abort());
 $("#resetChat").addEventListener("click", () => {
   chatAbort?.abort();
   history = [];
+  chatSession = newSession();
   renderEmpty();
 });
 
@@ -531,7 +540,9 @@ $("#scRun").addEventListener("click", async () => {
   const rows = picked.map((s) => ({
     name: s.name, turns: s.turns.length, checks: s.turns.filter((t) => t.expect?.length).length,
     done: 0, checked: 0, fails: 0, elapsed: 0, note: "", running: true, stopped: false,
+    started: false, server: "", results: [],
   }));
+  const runSession = newSession();
   renderSummary(rows);
 
   scAbort = new AbortController();
@@ -555,8 +566,10 @@ $("#scRun").addEventListener("click", async () => {
         const view = assistantView(turnsBox, think);
         messages.push({ role: "user", content: t.user });
         let r;
+        row.started = true;
         try {
-          r = await callTurn(messages, think, view, scAbort.signal);
+          r = await callTurn(messages, think, view, scAbort.signal,
+            { source: "web-scenario", session: runSession, scenario: s.name, turn: ti + 1 });
         } catch (err) {
           const aborted = err.name === "AbortError";
           view.fail(aborted ? "중지했습니다" : err.message);
@@ -565,18 +578,21 @@ $("#scRun").addEventListener("click", async () => {
             throw err;
           }
           // 호출 오류는 남은 검사까지 실패로 센다.
-          const left = s.turns.slice(ti).filter((x) => x.expect?.length).length;
+          const left = s.turns.slice(ti).filter((x) => x.expect?.length).length || 1;
           row.checked += left;
           row.fails += left;
           row.note = err.message;
+          row.results.push({ turn: ti + 1, expect: [], missing: ["(호출 오류)"] });
           break;
         }
         messages.push({ role: "assistant", content: r.content });
         row.done++;
         row.elapsed += r.elapsed_ms;
+        row.server = r.server;
         if (t.expect?.length) {
           const miss = checkExpect(r.content, t.expect);
           row.checked++;
+          row.results.push({ turn: ti + 1, expect: t.expect, missing: miss });
           if (miss.length) row.fails++;
           view.meta.prepend(el("span", { class: "chip " + (miss.length ? "fail" : "pass") },
             icon(miss.length ? "x-circle" : "check-circle"),
@@ -591,9 +607,17 @@ $("#scRun").addEventListener("click", async () => {
   } catch (err) {
     if (err.name !== "AbortError") log.append(el("p", { class: "error-box", text: err.message }));
   } finally {
-    rows.forEach((r) => {
+    rows.forEach((r, i) => {
       if (r.running && r.done < r.turns) r.stopped = true;
       r.running = false;
+      if (!r.started) return;
+      // 시나리오 요약을 실행 기록에 남긴다 (턴은 서버가 이미 남겼다).
+      api("/api/runs/scenario", {
+        session: runSession, name: r.name, base_url: v.base_url, model: v.model,
+        server: r.server || v.server, think: force || "scenario",
+        turns: r.turns, done: r.done, checks: r.checked, fails: r.fails, stopped: r.stopped,
+        elapsed_ms: r.elapsed, note: r.note, results: r.results,
+      }).catch((e) => console.warn("기록 실패", picked[i].name, e));
     });
     renderSummary(rows);
     scAbort = null;
@@ -604,6 +628,155 @@ $("#scRun").addEventListener("click", async () => {
 });
 
 $("#scStop").addEventListener("click", () => scAbort?.abort());
+
+// ---- 기록 탭 ----
+
+let histRecords = [];
+const avg = (xs) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null);
+const fmtAvgSec = (ms) => (ms == null ? "-" : fmtSec(ms));
+const fmtNum = (n) => (n == null ? "-" : Math.round(n).toLocaleString());
+
+async function loadHistory() {
+  const days = $("input[name=histDays]:checked").value;
+  try {
+    const r = await api(`/api/runs?days=${days}`);
+    histRecords = r.items;
+    $("#histDir").textContent = `기록 폴더 ${r.dir} · ${r.items.length.toLocaleString()}줄`;
+  } catch (err) {
+    histRecords = [];
+    $("#histDir").textContent = "기록을 읽지 못했습니다: " + err.message;
+  }
+  const sel = $("#histModel");
+  const cur = sel.value;
+  const models = [...new Set(histRecords.map((x) => x.model).filter(Boolean))].sort();
+  sel.replaceChildren(el("option", { value: "", text: "전체" }), ...models.map((m) => el("option", { value: m, text: m })));
+  sel.value = models.includes(cur) ? cur : "";
+  renderHistory();
+}
+
+function rateCell(passed, total) {
+  if (!total) return el("td", { text: "-" });
+  const pct = Math.round((passed / total) * 100);
+  return el("td", {}, el("span", { class: "rate" },
+    el("div", { class: "bar " + (passed === total ? "pass" : "fail") }, el("span", { style: `width:${pct}%` })),
+    el("span", { class: "num", text: `${pct}% (${passed}/${total})` })));
+}
+
+function table(headers, rows) {
+  return el("div", { class: "dtable-wrap" }, el("table", { class: "dtable" },
+    el("thead", {}, el("tr", {}, ...headers.map(([t, cls]) => el("th", { class: cls || null, text: t })))),
+    el("tbody", {}, ...rows)));
+}
+
+function renderHistory() {
+  const model = $("#histModel").value;
+  const source = $("#histSource").value;
+  const pick = (x) => (!model || x.model === model) && (!source || x.source === source);
+  const turns = histRecords.filter((x) => x.type === "turn" && pick(x));
+  const scen = histRecords.filter((x) => x.type === "scenario" && pick(x));
+  const ok = turns.filter((t) => !t.error);
+  const checks = scen.reduce((a, s) => a + s.checks, 0);
+  const passed = scen.reduce((a, s) => a + s.checks - s.fails, 0);
+  const tile = (label, value, cls) => el("div", { class: "tile" }, el("small", { text: label }), el("b", { class: cls || null, text: value }));
+  const body = $("#histBody");
+  if (!turns.length && !scen.length) {
+    body.replaceChildren(el("div", { class: "dtable-wrap" }, el("p", { class: "empty-note", text: "이 기간에 기록이 없습니다. 대화나 시나리오를 실행하면 쌓입니다." })));
+    return;
+  }
+
+  const tiles = el("div", { class: "tiles" },
+    tile("LLM 호출", `${turns.length.toLocaleString()}회${turns.length - ok.length ? ` · 오류 ${turns.length - ok.length}` : ""}`),
+    tile("시나리오 실행", `${scen.length.toLocaleString()}회`),
+    tile("검사 통과율", checks ? `${Math.round((passed / checks) * 100)}%` : "-", checks ? (passed === checks ? "pass" : "fail") : ""),
+    tile("평균 TTFT", fmtAvgSec(avg(ok.filter((t) => t.ttft_ms).map((t) => t.ttft_ms)))));
+
+  // 모델·thinking 별 호출 비교
+  const groups = new Map();
+  for (const t of turns) {
+    const k = `${t.model}\u0000${t.think}`;
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(t);
+  }
+  const cmpRows = [...groups.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([k, ts]) => {
+    const [m, think] = k.split("\u0000");
+    const good = ts.filter((t) => !t.error);
+    return el("tr", {},
+      el("td", { text: m }), el("td", {}, el("span", { class: "chip", text: think })),
+      el("td", { class: "num", text: ts.length.toLocaleString() }),
+      el("td", { class: "num", text: fmtAvgSec(avg(good.map((t) => t.elapsed_ms))) }),
+      el("td", { class: "num", text: fmtAvgSec(avg(good.filter((t) => t.ttft_ms).map((t) => t.ttft_ms))) }),
+      el("td", { class: "num", text: fmtNum(avg(good.filter((t) => t.usage).map((t) => t.usage.completion_tokens))) }),
+      el("td", { class: "num", text: fmtNum(avg(good.map((t) => [...(t.reasoning || "")].length))) }),
+      el("td", { class: "num", text: String(ts.length - good.length) }));
+  });
+
+  // 시나리오 통과율 (모델 × thinking 강제값)
+  const sg = new Map();
+  for (const s of scen) {
+    const k = `${s.model}\u0000${s.think}`;
+    if (!sg.has(k)) sg.set(k, []);
+    sg.get(k).push(s);
+  }
+  const scRows = [...sg.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([k, ss]) => {
+    const [m, think] = k.split("\u0000");
+    const c = ss.reduce((a, s) => a + s.checks, 0);
+    const p = ss.reduce((a, s) => a + s.checks - s.fails, 0);
+    const done = ss.reduce((a, s) => a + s.done, 0);
+    return el("tr", {},
+      el("td", { text: m }), el("td", {}, el("span", { class: "chip", text: think === "scenario" ? "시나리오 값" : think })),
+      el("td", { class: "num", text: String(ss.length) }), rateCell(p, c),
+      el("td", { class: "num", text: done ? fmtSec(ss.reduce((a, s) => a + s.elapsed_ms, 0) / done) : "-" }));
+  });
+
+  // 최근 시나리오 실행
+  const recentSc = scen.slice(-30).reverse().map((s) => el("tr", {},
+    el("td", { class: "num", text: s.time.slice(5, 19) }),
+    el("td", { text: s.name }), el("td", { text: s.model }),
+    el("td", {}, el("span", { class: "chip", text: s.think === "scenario" ? "시나리오 값" : s.think })),
+    el("td", {}, s.stopped && !s.fails
+      ? el("span", { class: "chip", text: `중지 ${s.done}/${s.turns}` })
+      : el("span", { class: "chip " + (s.fails ? "fail" : "pass") }, icon(s.fails ? "x-circle" : "check-circle"), s.fails ? `FAIL ${s.fails}` : "PASS")),
+    el("td", { class: "num", text: `${s.checks - s.fails}/${s.checks}` }),
+    el("td", { class: "num", text: fmtSec(s.elapsed_ms) }),
+    el("td", {}, el("span", { class: "chip", text: s.source }))));
+
+  // 최근 호출 (클릭하면 질문·답변·추론)
+  const recentTurns = [];
+  for (const t of turns.slice(-100).reverse()) {
+    const row = el("tr", { class: "clickable" },
+      el("td", { class: "num", text: t.time.slice(5, 19) }),
+      el("td", {}, el("span", { class: "chip", text: t.source })),
+      el("td", { text: t.model }),
+      el("td", {}, el("span", { class: "chip", text: t.think })),
+      el("td", { class: "wrap", text: (t.scenario ? `[${t.scenario} #${t.turn}] ` : "") + t.user.slice(0, 80) }),
+      el("td", { class: "num", text: t.error ? "오류" : fmtSec(t.elapsed_ms) }),
+      el("td", { class: "num", text: t.usage ? `${t.usage.prompt_tokens}→${t.usage.completion_tokens}` : "-" }));
+    if (t.error) row.querySelector("td:nth-child(6)").style.color = "var(--fail)";
+    const detail = el("tr", { class: "turn-detail", hidden: true }, el("td", { colspan: "7" },
+      el("b", { text: "질문" }), el("pre", { text: t.user }),
+      t.reasoning ? el("b", { text: `추론 (${[...t.reasoning].length}자)` }) : null, t.reasoning ? el("pre", { text: t.reasoning }) : null,
+      el("b", { text: t.error ? "오류" : "답변" }), el("pre", { text: t.error || t.content || "(본문 없음)" }),
+      el("b", { text: "설정" }), el("pre", { text: `${t.server} · ${t.base_url} · temperature ${t.temperature} · max_tokens ${t.max_tokens}${t.reasoning_effort ? " · effort " + t.reasoning_effort : ""}${t.finish ? " · finish " + t.finish : ""}` })));
+    row.addEventListener("click", () => { detail.hidden = !detail.hidden; });
+    recentTurns.push(row, detail);
+  }
+
+  body.replaceChildren(tiles,
+    el("div", { class: "section-title" }, icon("chart-bar"), "모델 · thinking 별 호출 비교"),
+    table([["모델"], ["thinking"], ["호출", "num"], ["평균 소요", "num"], ["평균 TTFT", "num"], ["평균 completion tok", "num"], ["평균 추론자", "num"], ["오류", "num"]], cmpRows),
+    el("div", { class: "section-title" }, icon("list-checks"), "시나리오 통과율"),
+    scRows.length ? table([["모델"], ["thinking"], ["실행", "num"], ["검사 통과율"], ["턴 평균", "num"]], scRows)
+      : el("div", { class: "dtable-wrap" }, el("p", { class: "empty-note", text: "시나리오 기록이 없습니다." })),
+    recentSc.length ? el("div", { class: "section-title" }, icon("clock-counter-clockwise"), "최근 시나리오 실행 (30)") : null,
+    recentSc.length ? table([["시각", "num"], ["시나리오"], ["모델"], ["thinking"], ["결과"], ["검사", "num"], ["소요", "num"], ["출처"]], recentSc) : null,
+    el("div", { class: "section-title" }, icon("chat-circle-dots"), "최근 호출 (100) · 줄을 누르면 질문·답변·추론"),
+    table([["시각", "num"], ["출처"], ["모델"], ["thinking"], ["질문"], ["소요", "num"], ["토큰", "num"]], recentTurns));
+}
+
+for (const r of $$("input[name=histDays]")) r.addEventListener("change", loadHistory);
+$("#histModel").addEventListener("change", renderHistory);
+$("#histSource").addEventListener("change", renderHistory);
+$("#histReload").addEventListener("click", loadHistory);
 
 // ---- 로그 탭 ----
 
@@ -670,6 +843,7 @@ function showTab(name) {
     $("#tab-" + b.dataset.tab).hidden = !on;
   }
   $("#resetChat").hidden = name !== "chat";
+  if (name === "history") loadHistory();
   if (name === "logs") {
     $("#logDot").hidden = true;
     if ($("#logFollow").checked) logScroller.scrollTop = logScroller.scrollHeight;
@@ -677,7 +851,7 @@ function showTab(name) {
   store("tab", name);
 }
 for (const b of $$(".tabs button")) b.addEventListener("click", () => showTab(b.dataset.tab));
-showTab(["scenario", "logs"].includes(store("tab")) ? store("tab") : "chat");
+showTab(["scenario", "history", "logs"].includes(store("tab")) ? store("tab") : "chat");
 
 renderEmpty();
 pollLogs();

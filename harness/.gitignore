@@ -3,3 +3,4 @@
 !go/bin/llmtest.exe
 go/llmtest
 __pycache__/
+runs/
