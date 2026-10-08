@@ -171,6 +171,56 @@ test("기록 탭: 호출과 시나리오가 쌓인다", async () => {
   expect(existsSync(join(tmp, "runs", files[0]))).toBe(true);
 });
 
+test("부하 테스트: 슬롯 4개인 모의 서버에서 권장 동시 수 4", async () => {
+  await tab("bench");
+  const form = page.locator("#benchForm");
+  await form.locator("input[name=levels]").fill("1,2,4,8");
+  await form.locator("input[name=requests]").fill("8");
+  await form.locator("input[name=max_tokens]").fill("32");
+  await page.locator("#benchRun").click();
+  await expect(page.locator("#benchRun")).toBeVisible({ timeout: 30_000 });
+  const tiles = page.locator("#benchBody .tile");
+  await expect(tiles.nth(0)).toContainText("권장 동시 수4");
+  await expect(tiles.nth(3)).toContainText("0건");
+  await expect(page.locator("#benchBody tbody tr")).toHaveCount(4);
+  await expect(page.locator("#benchBody .chart")).toHaveCount(2);
+  await expect(page.locator("#benchBody .chart .tag").first()).toContainText("권장");
+});
+
+test("토큰 비용: 단가를 넣으면 기록 탭과 답변 칩에 환산 비용이 나온다", async () => {
+  await tab("history");
+  const row = page.locator("#histBody tr", { hasText: "mock-model" }).filter({ has: page.locator(".price-cell") });
+  await expect(row.locator("td").nth(6)).toHaveText("단가 미설정");
+  await row.locator(".price-cell input").nth(0).fill("1");
+  await row.locator(".price-cell input").nth(1).fill("2");
+  await row.locator("button", { hasText: "저장" }).click();
+  await expect(row.locator("td").nth(6)).toContainText("$");
+  await expect(page.locator("#histBody .tile", { hasText: "환산 비용" })).toContainText("$");
+  const cfg = readFileSync(join(tmp, ".env.toml"), "utf8");
+  expect(cfg).toContain('[price."mock-model"]');
+  expect(cfg).toContain("[preset.mock]");
+
+  await page.reload();
+  await tab("chat");
+  const a = await send("ping", "off");
+  await expect(a.locator(".meta .chip", { hasText: "$" })).toBeVisible();
+});
+
+test("설정 패널 접기·펴기 (버튼, 새로고침 유지, Ctrl+B)", async () => {
+  const app = page.locator(".app");
+  const toggle = page.locator("#openSidebar");
+  await expect(page.locator("#sidebar")).toBeVisible();
+  await toggle.click();
+  await expect(app).toHaveClass(/collapsed/);
+  await expect(page.locator("#sidebar")).toBeHidden();
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
+  await page.reload();
+  await expect(app).toHaveClass(/collapsed/);
+  await page.keyboard.press("Control+B");
+  await expect(app).not.toHaveClass(/collapsed/);
+  await expect(page.locator("#sidebar")).toBeVisible();
+});
+
 test("테마는 새로고침 뒤에도 유지된다", async () => {
   const btn = page.locator("#themeBtn");
   for (let i = 0; i < 3 && (await page.evaluate(() => document.documentElement.dataset.theme)) !== "dark"; i++) {

@@ -13,6 +13,7 @@
   --accent-2: #9b6bff;
   --accent-soft: rgba(107, 77, 255, 0.09);
   --accent-ring: rgba(107, 77, 255, 0.28);
+  --shine: #e9b8ff;
   --on-accent: #ffffff;
   --user-bubble: #ece8ff;
   --pass: #0f9f6e;
@@ -44,6 +45,7 @@
     --accent-2: #b48cff;
     --accent-soft: rgba(143, 120, 255, 0.13);
     --accent-ring: rgba(143, 120, 255, 0.35);
+    --shine: #ffffff;
     --on-accent: #0b0b0f;
     --user-bubble: #262140;
     --pass: #3ccf91;
@@ -71,6 +73,7 @@
   --accent-2: #b48cff;
   --accent-soft: rgba(143, 120, 255, 0.13);
   --accent-ring: rgba(143, 120, 255, 0.35);
+  --shine: #ffffff;
   --on-accent: #0b0b0f;
   --user-bubble: #262140;
   --pass: #3ccf91;
@@ -103,7 +106,11 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .icon svg { width: 100%; height: 100%; }
 
 /* ---- 레이아웃 ---- */
-.app { display: grid; grid-template-columns: 320px 1fr; height: 100vh; height: 100dvh; }
+.app { display: grid; grid-template-columns: 320px 1fr; height: 100vh; height: 100dvh; transition: grid-template-columns .25s ease; }
+/* 데스크톱에서 설정 패널을 접는다 (Ctrl+B). 900px 아래는 서랍이라 영향이 없다. */
+.app.collapsed { grid-template-columns: 0 1fr; }
+.app.collapsed .sidebar { overflow: hidden; border-right-color: transparent; visibility: hidden; }
+#openSidebar[aria-expanded="false"] { color: var(--accent); }
 .sidebar {
   display: flex; flex-direction: column; min-height: 0;
   background: var(--surface);
@@ -173,6 +180,27 @@ button:focus-visible, .segmented label:focus-within { outline: 2px solid var(--a
 .hint { margin: 8px 0 0; font-size: 12px; color: var(--muted); }
 .hint .ok { color: var(--pass); }
 .hint .err { color: var(--fail); }
+/* made by doksam: 글자 위로 빛이 지나가고 양옆의 작은 별이 번갈아 반짝인다 */
+.credit { margin: 14px 0 0; font-size: 12px; line-height: 1; }
+.credit-text {
+  position: relative; display: inline-block; padding: 4px 16px 4px 2px;
+  font-weight: 600; letter-spacing: .06em;
+  background: linear-gradient(110deg, var(--muted) 0%, var(--muted) 30%, var(--accent) 42%, var(--shine) 50%, var(--accent-2) 58%, var(--muted) 70%, var(--muted) 100%);
+  background-size: 300% 100%;
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+  animation: credit-shine 3.6s ease-in-out infinite;
+}
+/* 별은 app.js 가 만들고, 한 번 반짝일 때마다 글자 주위의 임의의 자리로 옮긴다 */
+.spark {
+  position: absolute; width: var(--s, 10px); height: var(--s, 10px); pointer-events: none;
+  background: linear-gradient(135deg, var(--shine), var(--accent-2));
+  clip-path: polygon(50% 0, 62% 38%, 100% 50%, 62% 62%, 50% 100%, 38% 62%, 0 50%, 38% 38%);
+  filter: drop-shadow(0 0 4px var(--accent-2));
+  opacity: 0;
+  animation: credit-twinkle var(--d, 1.8s) ease-in-out infinite;
+}
+@keyframes credit-shine { 0% { background-position: 100% 0; } 60%, 100% { background-position: 0 0; } }
+@keyframes credit-twinkle { 0%, 100% { opacity: 0; transform: scale(.3) rotate(0deg); } 50% { opacity: 1; transform: scale(1) rotate(45deg); } }
 .path { margin: 4px 0 0; font-family: var(--mono); font-size: 11px; color: var(--muted); word-break: break-all; }
 
 /* ---- 버튼 ---- */
@@ -391,6 +419,7 @@ button:focus-visible, .segmented label:focus-within { outline: 2px solid var(--a
 .history { overflow-y: auto; }
 .inline-field { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
 .inline-field select { width: auto; padding: 4px 8px; font-size: 12px; }
+.section-title .btn { height: 28px; font-size: 12px; font-weight: 500; }
 .section-title { display: flex; align-items: center; gap: 6px; margin: 22px 0 8px; font-size: 13px; font-weight: 600; color: var(--text-2); }
 .dtable-wrap { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow-x: auto; }
 .dtable { width: 100%; border-collapse: collapse; font-size: 13px; }
@@ -406,6 +435,38 @@ button:focus-visible, .segmented label:focus-within { outline: 2px solid var(--a
 .turn-detail pre { margin: 6px 0 0; white-space: pre-wrap; word-break: break-word; font: 12px/1.5 var(--mono); color: var(--text-2); }
 .turn-detail b { font-size: 12px; color: var(--muted); }
 .dtable tr.clickable { cursor: pointer; }
+.price-cell { white-space: nowrap; }
+.btn-row { display: inline-flex; gap: 4px; flex-wrap: wrap; }
+.num-l { font-family: var(--mono); font-size: 12px; }
+.dtable tr.total-row td { font-weight: 600; background: var(--surface-2); }
+.price-cell span { color: var(--muted); margin-right: 4px; font-family: var(--mono); font-size: 12px; }
+.dtable .price-cell input[type="number"] { width: 96px; padding: 4px 8px; font: 12px var(--mono); display: inline-block; }
+.tiles { grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
+
+/* ---- 부하 ---- */
+.bench-form .inline-field input { width: auto; padding: 4px 8px; font-size: 12px; margin: 0; }
+.bench-form textarea { flex-basis: 100%; margin: 4px 0 0; font-size: 13px; resize: vertical; }
+.bench-progress { display: grid; gap: 8px; margin: 14px 0; }
+.bench-progress .row { display: grid; grid-template-columns: 90px 1fr 150px; gap: 12px; align-items: center; font-size: 12px; }
+.bench-progress .row .num { font-family: var(--mono); color: var(--muted); text-align: right; }
+.charts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin: 12px 0 4px; }
+.chart { position: relative; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 16px 10px; }
+.chart h4 { margin: 0 0 2px; font-size: 13px; }
+.chart small { color: var(--muted); font-size: 12px; }
+.chart svg { display: block; width: 100%; height: 220px; margin-top: 8px; overflow: visible; }
+.chart .grid line { stroke: var(--border); stroke-width: 1; }
+.chart .axis text { fill: var(--muted); font: 11px var(--mono); }
+.chart .bar { fill: var(--accent); }
+.chart .hit { fill: transparent; cursor: default; }
+.chart .hit:hover + .bar, .chart .bar.hover { opacity: .8; }
+.chart .val { fill: var(--text-2); font: 11px var(--mono); }
+.chart .tag { fill: var(--accent); font: 600 11px var(--font); }
+.chart .err { fill: var(--fail); font: 600 11px var(--font); }
+.chart-tip {
+  position: absolute; pointer-events: none; padding: 6px 9px; border-radius: 8px; white-space: nowrap;
+  background: var(--text); color: var(--bg); font: 12px var(--mono); box-shadow: var(--shadow); transform: translate(-50%, -110%);
+}
+.tile b.accent { color: var(--accent); }
 
 /* ---- 로그 ---- */
 .logs { overflow-y: auto; }
@@ -452,11 +513,14 @@ button:focus-visible, .segmented label:focus-within { outline: 2px solid var(--a
   .sidebar.open { transform: none; }
   .backdrop { position: fixed; inset: 0; z-index: 10; background: rgba(0, 0, 0, 0.35); backdrop-filter: blur(2px); }
   .only-mobile { display: inline-grid; }
+  .app.collapsed { grid-template-columns: 1fr; }
+  .app.collapsed .sidebar { visibility: visible; }
   .topbar { padding: 10px 12px; }
   #resetChat .label { display: none; }
   .thread, .composer, .scenario-wrap { padding-left: 16px; padding-right: 16px; }
   .suggest { grid-template-columns: 1fr; }
   .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .charts { grid-template-columns: 1fr; }
   .board-row { grid-template-columns: 1fr 90px 64px; }
   .board-row .bar-cell { display: none; }
   .msg.user > div { max-width: 88%; }
@@ -473,5 +537,6 @@ button:focus-visible, .segmented label:focus-within { outline: 2px solid var(--a
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .spark { display: none; }
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }

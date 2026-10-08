@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"mime"
 	"net"
@@ -45,6 +46,7 @@ type webServer struct {
 	scenarios string            // 시나리오 파일·폴더 (쉼표로 여러 개)
 	detected  map[string]string // base_url → 판별한 서버 종류
 	presets   []Preset          // .env.toml 의 [preset.*]
+	prices    map[string]Price  // .env.toml 의 [price."<모델>"]
 	logs      *logBuf           // 로그 탭과 stdout
 	runs      *runStore         // 실행 기록 (runs/*.jsonl)
 }
@@ -64,7 +66,7 @@ func runWeb(addr string, open bool, cfgPath string, cfg map[string]string, s Set
 	if abs, err := filepath.Abs(cfgPath); err == nil {
 		cfgPath = abs
 	}
-	ws := &webServer{settings: s, cfgPath: cfgPath, cfg: cfg, client: &http.Client{Timeout: timeout}, scenarios: scenarios, detected: map[string]string{}, presets: presetsFrom(cfg), logs: &logBuf{boot: time.Now().Format("2006-01-02 15:04:05.000")}}
+	ws := &webServer{settings: s, cfgPath: cfgPath, cfg: cfg, client: &http.Client{Timeout: timeout}, scenarios: scenarios, detected: map[string]string{}, presets: presetsFrom(cfg), prices: pricesFrom(cfg), logs: &logBuf{boot: time.Now().Format("2006-01-02 15:04:05.000")}}
 
 	ws.runs = newRunStore(runsDir(), func(msg string) { ws.logs.add("runs", "warn", msg, "") })
 	static, err := fs.Sub(webFiles, "web")
@@ -80,6 +82,10 @@ func runWeb(addr string, open bool, cfgPath string, cfg map[string]string, s Set
 	mux.HandleFunc("/api/logs", ws.logs.handleLogs)
 	mux.HandleFunc("/api/runs", ws.handleRuns)
 	mux.HandleFunc("/api/runs/scenario", ws.handleRunScenario)
+	mux.HandleFunc("/api/bench", ws.handleBench)
+	mux.HandleFunc("/api/prices", ws.handlePrices)
+	mux.HandleFunc("/api/prices/compare", ws.handlePriceCompare)
+	mux.HandleFunc("/api/prices/fill", ws.handlePriceFill)
 
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
@@ -203,10 +209,11 @@ func (ws *webServer) handleConfig(w http.ResponseWriter, r *http.Request) {
 		}
 		out := struct {
 			Settings
-			APIKeySet  bool         `json:"api_key_set"`
-			ConfigPath string       `json:"config_path"`
-			Presets    []presetView `json:"presets"`
-		}{ws.settings, ws.settings.APIKey != "", ws.cfgPath, views}
+			APIKeySet  bool             `json:"api_key_set"`
+			ConfigPath string           `json:"config_path"`
+			Presets    []presetView     `json:"presets"`
+			Prices     map[string]Price `json:"prices"`
+		}{ws.settings, ws.settings.APIKey != "", ws.cfgPath, views, ws.prices}
 		ws.mu.Unlock()
 		writeJSON(w, http.StatusOK, out)
 
@@ -264,7 +271,7 @@ func (ws *webServer) handleConfig(w http.ResponseWriter, r *http.Request) {
 		llm["temperature"] = strconv.FormatFloat(s.Temperature, 'f', -1, 64)
 		llm["max_tokens"] = strconv.Itoa(s.MaxTokens)
 		llm["system"] = s.System
-		if err := saveToml(ws.cfgPath, llm, ws.presets); err != nil {
+		if err := saveToml(ws.cfgPath, llm, ws.presets, ws.prices); err != nil {
 			writeErr(w, http.StatusInternalServerError, err)
 			return
 		}
@@ -494,4 +501,264 @@ func (ws *webServer) handleRunScenario(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// handleBench 는 부하 테스트를 돌리고 진행을 SSE 로 보낸다 (issue #17).
+// 이벤트: sample (요청 한 건), level (수준 요약), done ({levels, recommend}), error.
+func (ws *webServer) handleBench(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	var in struct {
+		connReq
+		Model       string  `json:"model"`
+		Server      string  `json:"server"`
+		Think       string  `json:"think"`
+		Effort      string  `json:"reasoning_effort"`
+		Temperature float64 `json:"temperature"`
+		MaxTokens   int     `json:"max_tokens"`
+		Levels      string  `json:"levels"`
+		Requests    int     `json:"requests"`
+		Prompt      string  `json:"prompt"`
+		System      string  `json:"system"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	levels, err := parseLevels(in.Levels)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	if strings.TrimSpace(in.Prompt) == "" {
+		writeErr(w, http.StatusBadRequest, errors.New("프롬프트를 입력하세요"))
+		return
+	}
+	if in.Requests < 0 || in.Requests > 1000 {
+		writeErr(w, http.StatusBadRequest, errors.New("수준당 요청 수는 0~1000"))
+		return
+	}
+	opt := ws.options(in.connReq)
+	opt.Model, opt.Temp, opt.MaxTokens, opt.Effort = in.Model, in.Temperature, in.MaxTokens, in.Effort
+	if opt.Base == "" || opt.Model == "" {
+		writeErr(w, http.StatusBadRequest, errors.New("접속주소와 모델명을 입력하세요"))
+		return
+	}
+	if opt.Server, err = normalizeServer(in.Server); err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	if opt.Server == ServerAuto {
+		opt.Server = ws.detect(r.Context(), opt)
+	}
+
+	flusher, _ := w.(http.Flusher)
+	w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	var mu sync.Mutex
+	send := func(event string, v any) {
+		b, _ := json.Marshal(v)
+		mu.Lock()
+		defer mu.Unlock()
+		fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, b)
+		if flusher != nil {
+			flusher.Flush()
+		}
+	}
+	ws.logs.add("bench", "info", fmt.Sprintf("부하 테스트 시작 · %s · 동시 %v · 수준당 요청 %d · max_tokens %d · think=%s", opt.Model, levels, in.Requests, opt.MaxTokens, in.Think), "")
+	cfg := BenchConfig{Levels: levels, Requests: in.Requests, Prompt: in.Prompt, System: in.System, Think: in.Think}
+	res, err := runBench(r.Context(), opt, cfg,
+		func(s BenchSample) { send("sample", s) },
+		func(b BenchLevel) {
+			level := "info"
+			if b.Errors > 0 {
+				level = "error"
+			}
+			ws.logs.add("bench", level, fmt.Sprintf("동시 %d · 요청 %d · 오류 %d · %.1f tok/s · p95 %dms · TTFT p95 %dms", b.Level, b.Requests, b.Errors, b.TokPerSec, b.LatP95ms, b.TTFTP95ms), b.FirstError)
+			send("level", b)
+		})
+	rec := recommendLevel(res)
+	stopped := errors.Is(err, context.Canceled)
+	if len(res) > 0 {
+		werr := ws.runs.append(BenchRecord{Type: "bench", Time: time.Now().Format(timeFmt), Source: "web-bench", BaseURL: opt.Base, Model: opt.Model,
+			Server: opt.Server, Think: in.Think, MaxTokens: opt.MaxTokens, Prompt: in.Prompt, Requests: in.Requests, Levels: res, Recommend: rec, Stopped: stopped})
+		if werr != nil {
+			ws.logs.add("runs", "error", "기록 쓰기 실패: "+werr.Error(), "")
+		}
+	}
+	if err != nil && !stopped {
+		send("error", err.Error())
+		return
+	}
+	if stopped {
+		return
+	}
+	ws.logs.add("bench", "info", fmt.Sprintf("부하 테스트 끝 · 권장 동시 수 %d", rec), "")
+	send("done", map[string]any{"levels": res, "recommend": rec, "server": opt.Server})
+}
+
+// handlePrices 는 모델 하나의 단가를 저장한다. input·output 이 둘 다 0 이면 지운다 (issue #18).
+func (ws *webServer) handlePrices(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	var in struct {
+		Model string `json:"model"`
+		Price
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	if strings.TrimSpace(in.Model) == "" || in.Input < 0 || in.Output < 0 || in.Input > 1e6 || in.Output > 1e6 {
+		writeErr(w, http.StatusBadRequest, errors.New("모델 이름과 0 이상의 단가를 넣으세요"))
+		return
+	}
+	ws.mu.Lock()
+	defer ws.mu.Unlock()
+	if in.Price.set() {
+		ws.prices[in.Model] = in.Price
+	} else {
+		delete(ws.prices, in.Model)
+	}
+	llm := map[string]string{}
+	for k, v := range ws.cfg {
+		if rest, ok := strings.CutPrefix(k, "llm."); ok {
+			llm[rest] = v
+		}
+	}
+	if err := saveToml(ws.cfgPath, llm, ws.presets, ws.prices); err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, ws.prices)
+}
+
+// fetchCatalog 는 공개 단가 카탈로그(openrouter, orcarouter) 하나를 가져온다. 인터넷이 필요하다.
+func (ws *webServer) fetchCatalog(ctx context.Context, source string) ([]ORModel, error) {
+	url, ok := priceCatalogs[source]
+	if !ok {
+		return nil, fmt.Errorf("모르는 단가 출처: %q", source)
+	}
+	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := ws.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("%s 에 연결하지 못했습니다 (인터넷 필요): %v", catalogLabel[source], err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 32<<20))
+	if err != nil || resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("%s 응답 오류: HTTP %d %v", catalogLabel[source], resp.StatusCode, err)
+	}
+	return parseCatalog(body)
+}
+
+// handlePriceCompare 는 두 카탈로그의 단가를 함께 가져와 모델별로 돌려준다 (issue #20). 저장하지 않는다.
+func (ws *webServer) handlePriceCompare(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	var in struct {
+		Models []string `json:"models"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	type srcInfo struct {
+		Label   string `json:"label"`
+		Fetched int    `json:"fetched"`
+		Error   string `json:"error,omitempty"`
+	}
+	sources := map[string]srcInfo{}
+	lists := map[string][]ORModel{}
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	for src := range priceCatalogs {
+		wg.Add(1)
+		go func(src string) {
+			defer wg.Done()
+			list, err := ws.fetchCatalog(r.Context(), src)
+			mu.Lock()
+			defer mu.Unlock()
+			info := srcInfo{Label: catalogLabel[src], Fetched: len(list)}
+			if err != nil {
+				info.Error = err.Error()
+			}
+			sources[src], lists[src] = info, list
+		}(src)
+	}
+	wg.Wait()
+	matches := map[string]map[string]*ORModel{}
+	for _, model := range in.Models {
+		row := map[string]*ORModel{}
+		for src, list := range lists {
+			if m, ok := matchCatalog(model, list); ok {
+				m := m
+				row[src] = &m
+			} else {
+				row[src] = nil
+			}
+		}
+		matches[model] = row
+	}
+	ws.logs.add("http", "info", fmt.Sprintf("단가 비교 · 모델 %d개 · OpenRouter %d개 · OrcaRouter %d개", len(in.Models), sources["openrouter"].Fetched, sources["orcarouter"].Fetched), "")
+	writeJSON(w, http.StatusOK, map[string]any{"sources": sources, "matches": matches})
+}
+
+// handlePriceFill 은 고른 카탈로그에서 같은 모델의 단가를 찾아 기준 단가로 저장한다 (issue #18, #20).
+func (ws *webServer) handlePriceFill(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	var in struct {
+		Source string   `json:"source"`
+		Models []string `json:"models"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	list, err := ws.fetchCatalog(r.Context(), in.Source)
+	if err != nil {
+		writeErr(w, http.StatusBadGateway, err)
+		return
+	}
+	matched := map[string]ORModel{}
+	unmatched := []string{}
+	ws.mu.Lock()
+	defer ws.mu.Unlock()
+	for _, model := range in.Models {
+		m, ok := matchCatalog(model, list)
+		if !ok {
+			unmatched = append(unmatched, model)
+			continue
+		}
+		matched[model] = m
+		ws.prices[model] = Price{Input: m.Input, Output: m.Output, Source: in.Source + ":" + m.ID}
+	}
+	if len(matched) > 0 {
+		llm := map[string]string{}
+		for k, v := range ws.cfg {
+			if rest, ok := strings.CutPrefix(k, "llm."); ok {
+				llm[rest] = v
+			}
+		}
+		if err := saveToml(ws.cfgPath, llm, ws.presets, ws.prices); err != nil {
+			writeErr(w, http.StatusInternalServerError, err)
+			return
+		}
+	}
+	ws.logs.add("http", "info", fmt.Sprintf("%s 단가 적용 · 모델 %d개 중 %d개 맞춤 · 목록 %d개", catalogLabel[in.Source], len(in.Models), len(matched), len(list)), "")
+	writeJSON(w, http.StatusOK, map[string]any{"matched": matched, "unmatched": unmatched, "prices": ws.prices, "fetched": len(list), "source": in.Source})
 }

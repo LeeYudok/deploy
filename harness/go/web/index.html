@@ -111,6 +111,7 @@
       <button type="submit" form="settings" class="btn primary block" data-icon="floppy-disk">.env.toml 에 저장</button>
       <p class="hint"><span id="saveStatus">화면 값은 저장 전에도 바로 쓰입니다.</span></p>
       <p class="path" id="cfgPath"></p>
+      <p class="credit"><span class="credit-text">made by doksam</span></p>
     </div>
   </aside>
 
@@ -122,10 +123,11 @@
       <button type="button" class="icon-btn" id="updateClose" aria-label="닫기" data-icon="x"></button>
     </div>
     <header class="topbar">
-      <button type="button" class="icon-btn only-mobile" id="openSidebar" aria-label="설정 열기" data-icon="gear-six"></button>
+      <button type="button" class="icon-btn" id="openSidebar" aria-label="설정 패널 숨기기·보이기" aria-controls="sidebar" aria-expanded="true" title="설정 패널 숨기기·보이기 (Ctrl+B)" data-icon="sidebar-simple"></button>
       <nav class="segmented tabs" role="tablist" aria-label="화면">
         <button type="button" role="tab" data-tab="chat" aria-selected="true" data-icon="chat-circle-dots" title="대화"><span class="label">대화</span></button>
         <button type="button" role="tab" data-tab="scenario" aria-selected="false" data-icon="list-checks" title="시나리오"><span class="label">시나리오</span></button>
+        <button type="button" role="tab" data-tab="bench" aria-selected="false" data-icon="gauge" title="부하"><span class="label">부하</span></button>
         <button type="button" role="tab" data-tab="history" aria-selected="false" data-icon="clock-counter-clockwise" title="기록"><span class="label">기록</span></button>
         <button type="button" role="tab" data-tab="logs" aria-selected="false" data-icon="terminal-window" title="로그"><span class="label">로그</span><span class="tab-dot" id="logDot" hidden></span></button>
       </nav>
@@ -178,6 +180,34 @@
         <div id="scLog" class="sclog"></div>
       </div>
     </section>
+    <section id="tab-bench" class="tab history" role="tabpanel" hidden>
+      <div class="logs-wrap">
+        <form id="benchForm" class="toolbar bench-form" autocomplete="off">
+          <label class="inline-field">동시 수준
+            <input name="levels" value="1,2,4,8" size="12" spellcheck="false" aria-describedby="benchHint">
+          </label>
+          <label class="inline-field">수준당 요청
+            <input name="requests" type="number" min="0" max="1000" placeholder="수준×2" style="width:84px">
+          </label>
+          <label class="inline-field">max_tokens
+            <input name="max_tokens" type="number" min="1" value="256" style="width:84px">
+          </label>
+          <div class="segmented small" role="radiogroup" aria-label="부하 테스트 thinking">
+            <span class="seg-label" data-icon="brain">thinking</span>
+            <label><input type="radio" name="benchThink" value="off" checked><span>Off</span></label>
+            <label><input type="radio" name="benchThink" value="on"><span>On</span></label>
+            <label><input type="radio" name="benchThink" value="auto"><span>Auto</span></label>
+          </div>
+          <span class="spacer"></span>
+          <button type="button" class="btn ghost" id="benchStop" hidden data-icon="stop">중지</button>
+          <button type="submit" class="btn primary" id="benchRun" data-icon="play">실행</button>
+          <textarea name="prompt" rows="2" aria-label="부하 테스트 프롬프트">은행 계좌이체에서 동시성 문제를 막는 방법을 다섯 문장으로 설명해 줘.</textarea>
+        </form>
+        <p class="path" id="benchHint">동시 수준마다 요청을 한꺼번에 보내 처리량(tok/s)과 지연을 잽니다. 접속·모델·시스템 프롬프트는 왼쪽 설정을 씁니다. 공유 서버에는 부하가 가니 작게 시작하세요. 요청 끝에 번호를 붙여 응답 캐시 효과를 줄입니다.</p>
+        <div id="benchBody"></div>
+      </div>
+    </section>
+
     <section id="tab-history" class="tab history" role="tabpanel" hidden>
       <div class="logs-wrap">
         <div class="toolbar">
@@ -196,6 +226,7 @@
               <option value="web-chat">웹 대화</option>
               <option value="web-scenario">웹 시나리오</option>
               <option value="cli">CLI</option>
+              <option value="web-bench">부하 테스트</option>
             </select>
           </label>
           <span class="spacer"></span>

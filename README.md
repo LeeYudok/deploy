@@ -15,7 +15,9 @@ Windows PC 에 실행파일 하나(`llmtest.exe`)만 복사하면 된다. Go·No
 | 시나리오 검증 | JSON 으로 적은 여러 턴을 돌리고, 기대 문자열로 PASS/FAIL 을 판정한다. 한·영·일·중 시나리오 포함 |
 | thinking 조절 | `-think on/off` 를 서버에 맞는 필드로 바꿔 보낸다. 서버 종류는 `/v1/models` 로 자동 판별한다 |
 | 웹 UI | 설정·프리셋, 대화, 시나리오, 실행 기록 비교, 요청·응답 로그를 브라우저에서 다룬다. 코드 블록은 복사하거나 파일로 내려받을 수 있다 |
+| 동시 처리 부하 테스트 | 동시 수준을 늘려 가며 처리량(tok/s)·지연·오류를 재고 권장 동시 수를 낸다 (`-bench`, 웹 부하 탭) |
 | 실행 기록 | 모든 호출과 시나리오 결과를 JSONL 로 남긴다. 모델·thinking 별 속도와 통과율을 비교한다 |
+| 토큰 비용 환산 | OrcaRouter·OpenRouter 공개 단가를 모델별로 가져와 토큰 사용량을 달러로 환산하고 두 곳을 비교한다 |
 
 ## 빠른 시작 (Windows)
 
@@ -114,3 +116,7 @@ CGO_ENABLED=0 GOOS=windows GOARCH=amd64 GOTOOLCHAIN=go1.27.1 go build -trimpath 
 | Go 배포판 (go1.27.1.windows-amd64.zip) | `harness/go/bin/` | BSD-3-Clause ([go.dev/LICENSE](https://go.dev/LICENSE)) |
 | Phosphor Icons | `harness/go/web/icons.js` (path 인라인) | MIT ([phosphor-icons/core](https://github.com/phosphor-icons/core)) |
 | Playwright (`@playwright/test`) | `harness/e2e` 개발 의존성 (레포에 넣지 않음) | Apache-2.0 |
+
+---
+
+made by doksam

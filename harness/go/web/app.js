@@ -62,9 +62,52 @@ function sidebar(open) {
   $("#sidebar").classList.toggle("open", open);
   $("#backdrop").hidden = !open;
 }
-$("#openSidebar").addEventListener("click", () => sidebar(true));
+// 데스크톱에서는 설정 패널을 접고 펴고(상태를 기억한다), 좁은 화면에서는 서랍을 연다.
+const app = $(".app");
+const narrow = matchMedia("(max-width: 900px)");
+function setCollapsed(on) {
+  app.classList.toggle("collapsed", on);
+  $("#openSidebar").setAttribute("aria-expanded", String(!on));
+  store("sidebar", on ? "hidden" : null);
+}
+function toggleSidebar() {
+  if (narrow.matches) sidebar(!$("#sidebar").classList.contains("open"));
+  else setCollapsed(!app.classList.contains("collapsed"));
+}
+$("#openSidebar").addEventListener("click", toggleSidebar);
+document.addEventListener("keydown", (e) => {
+  if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "b") {
+    e.preventDefault();
+    toggleSidebar();
+  }
+});
+if (store("sidebar") === "hidden") setCollapsed(true);
 $("#closeSidebar").addEventListener("click", () => sidebar(false));
 $("#backdrop").addEventListener("click", () => sidebar(false));
+
+// ---- made by doksam 반짝임 ----
+
+// 별 세 개가 서로 다른 박자로 반짝이고, 한 번 반짝일 때마다(투명한 순간에) 글자 주위의 임의의 자리·크기로 옮긴다.
+(function sparkle() {
+  const host = $(".credit-text");
+  if (!host) return;
+  const place = (s) => {
+    const w = host.offsetWidth;
+    const h = host.offsetHeight;
+    const size = 6 + Math.random() * 8;
+    s.style.setProperty("--s", `${size.toFixed(1)}px`);
+    s.style.left = `${(Math.random() * (w + 12) - 6 - size / 2).toFixed(1)}px`;
+    s.style.top = `${(Math.random() * (h + 14) - 7 - size / 2).toFixed(1)}px`;
+  };
+  for (let i = 0; i < 3; i++) {
+    const s = el("span", { class: "spark", "aria-hidden": "true" });
+    s.style.setProperty("--d", `${(1.5 + Math.random()).toFixed(2)}s`);
+    s.style.animationDelay = `${(i * 0.55).toFixed(2)}s`;
+    place(s);
+    s.addEventListener("animationiteration", () => place(s));
+    host.append(s);
+  }
+})();
 
 // ---- 설정 ----
 
@@ -119,7 +162,7 @@ function keyHint() {
 function renderPresets() {
   const sel = settingsForm.elements.preset;
   sel.replaceChildren(el("option", { value: "", text: "직접 입력" }),
-    ...presets.map((p) => el("option", { value: p.id, text: `${p.label} · ${p.model}` })));
+    ...presets.map((p, i) => el("option", { value: p.id, text: `${i + 1}. ${p.label} · ${p.model}` })));
   const f = settingsForm.elements;
   const cur = presets.find((p) => sameBase(p.base_url, f.base_url.value) && p.model === f.model.value);
   sel.value = cur ? cur.id : "";
@@ -141,6 +184,7 @@ function applyPreset(id) {
 async function loadConfig() {
   const c = await api("/api/config");
   presets = c.presets || [];
+  prices = c.prices || {};
   savedKey = { base: c.base_url, set: c.api_key_set };
   const f = settingsForm.elements;
   f.base_url.value = c.base_url || "";
@@ -305,6 +349,19 @@ function renderText(container, text) {
 
 function fmtSec(ms) { return (ms / 1000).toFixed(ms < 10000 ? 2 : 1) + "s"; }
 
+// ---- 단가 (100만 토큰당 USD, .env.toml 의 [price."<모델>"]) ----
+
+let prices = {};
+const usd = (v) => (v === 0 ? "$0" : v < 0.01 ? `$${v.toFixed(5)}` : v < 1 ? `$${v.toFixed(4)}` : `$${v.toFixed(2)}`);
+const priceOf = (model) => {
+  const p = prices[model];
+  return p && (p.input > 0 || p.output > 0) ? p : null;
+};
+const costOf = (model, promptTok, outTok) => {
+  const p = priceOf(model);
+  return p ? (promptTok / 1e6) * p.input + (outTok / 1e6) * p.output : null;
+};
+
 function statChips(r, think) {
   const chips = [
     el("span", { class: "chip accent" }, icon("cube"), SERVER_LABEL[r.server] || r.server || "?"),
@@ -316,6 +373,12 @@ function statChips(r, think) {
   if (u) {
     chips.push(el("span", { class: "chip", title: "prompt / completion 토큰" }, `${u.prompt_tokens} → ${u.completion_tokens} tok`));
     if (u.completion_tokens_details) chips.push(el("span", { class: "chip" }, `reasoning ${u.completion_tokens_details.reasoning_tokens} tok`));
+  }
+  const model = settingsForm.elements.model.value.trim();
+  const c = u ? costOf(model, u.prompt_tokens, u.completion_tokens) : null;
+  if (c != null) {
+    const p = priceOf(model);
+    chips.push(el("span", { class: "chip", title: `환산 비용 (100만 토큰당 입력 $${p.input} · 출력 $${p.output})` }, usd(c)));
   }
   if (r.finish && r.finish !== "stop") chips.push(el("span", { class: "chip fail" }, "finish=" + r.finish));
   return chips;
@@ -705,9 +768,196 @@ $("#scRun").addEventListener("click", async () => {
 
 $("#scStop").addEventListener("click", () => scAbort?.abort());
 
+// ---- 부하 탭 ----
+
+const SVG_NS = "http://www.w3.org/2000/svg";
+function svgEl(tag, attrs = {}, text) {
+  const n = document.createElementNS(SVG_NS, tag);
+  for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
+  if (text != null) n.textContent = text;
+  return n;
+}
+
+// barChart 는 동시 수준별 막대 차트 하나를 그린다 (계열 하나, 축 하나).
+// 권장 수준은 막대 위에 "권장" 글자로, 오류가 난 수준은 "오류 N" 글자로 표시한다 (색만으로 구분하지 않는다).
+function barChart({ title, sub, unit, data, fmt }) {
+  const W = 520, H = 220, L = 46, R = 8, T = 22, B = 26;
+  const max = Math.max(1, ...data.map((d) => d.value));
+  const nice = (v) => { const p = 10 ** Math.floor(Math.log10(v)); return Math.ceil(v / p) * p; };
+  const top = nice(max);
+  const y = (v) => T + (H - T - B) * (1 - v / top);
+  const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": title });
+  const grid = svgEl("g", { class: "grid" });
+  const axis = svgEl("g", { class: "axis" });
+  for (const f of [0, 0.5, 1]) {
+    const v = top * f;
+    grid.append(svgEl("line", { x1: L, x2: W - R, y1: y(v), y2: y(v) }));
+    axis.append(svgEl("text", { x: L - 6, y: y(v) + 4, "text-anchor": "end" }, fmt(v)));
+  }
+  svg.append(grid, axis);
+  const slot = (W - L - R) / data.length;
+  const bw = Math.min(56, slot * 0.6);
+  const wrap = el("div", { class: "chart" }, el("h4", { text: title }), el("small", { text: sub }));
+  const tip = el("div", { class: "chart-tip", hidden: true });
+  data.forEach((d, i) => {
+    const cx = L + slot * i + slot / 2;
+    const h = Math.max(0, H - B - y(d.value));
+    const r = Math.min(4, h / 2);
+    // 아래는 기준선에 붙이고 위만 4px 둥글게
+    const x0 = cx - bw / 2, y0 = H - B - h;
+    const path = h > 0
+      ? `M${x0},${H - B} V${y0 + r} Q${x0},${y0} ${x0 + r},${y0} H${x0 + bw - r} Q${x0 + bw},${y0} ${x0 + bw},${y0 + r} V${H - B} Z`
+      : "";
+    const bar = svgEl("path", { class: "bar", d: path });
+    axis.append(svgEl("text", { x: cx, y: H - 8, "text-anchor": "middle" }, `${d.x}`));
+    svg.append(bar);
+    if (d.highlight) svg.append(svgEl("text", { class: "tag", x: cx, y: y0 - 6, "text-anchor": "middle" }, `권장 · ${fmt(d.value)}`));
+    else if (d.errors) svg.append(svgEl("text", { class: "err", x: cx, y: y0 - 6, "text-anchor": "middle" }, `오류 ${d.errors}`));
+    else svg.append(svgEl("text", { class: "val", x: cx, y: y0 - 6, "text-anchor": "middle" }, fmt(d.value)));
+    // 막대보다 넓은 투명 영역으로 hover
+    const hit = svgEl("rect", { class: "hit", x: L + slot * i, y: T, width: slot, height: H - T - B });
+    hit.addEventListener("mouseenter", () => {
+      bar.classList.add("hover");
+      tip.textContent = `동시 ${d.x} · ${fmt(d.value)} ${unit}${d.errors ? ` · 오류 ${d.errors}` : ""}`;
+      tip.hidden = false;
+      const box = svg.getBoundingClientRect();
+      const host = wrap.getBoundingClientRect();
+      tip.style.left = `${box.left - host.left + (cx / W) * box.width}px`;
+      tip.style.top = `${box.top - host.top + (y0 / H) * box.height}px`;
+    });
+    hit.addEventListener("mouseleave", () => { bar.classList.remove("hover"); tip.hidden = true; });
+    svg.append(hit);
+  });
+  wrap.append(svg, tip);
+  return wrap;
+}
+
+const ms = (v) => (v >= 10000 ? `${(v / 1000).toFixed(1)}s` : v >= 1000 ? `${(v / 1000).toFixed(2)}s` : `${Math.round(v)}ms`);
+
+function renderBench(state) {
+  const { plan, levels, live, recommend, done } = state;
+  const body = $("#benchBody");
+  const progress = el("div", { class: "bench-progress" }, ...plan.map((p) => {
+    const lv = levels.find((x) => x.level === p.level);
+    const cur = live[p.level] || { done: 0, errors: 0 };
+    const n = lv ? lv.requests : p.requests;
+    const finished = lv ? lv.ok + lv.errors : cur.done;
+    const errs = lv ? lv.errors : cur.errors;
+    const state2 = lv ? (lv.errors ? "fail" : "pass") : "";
+    return el("div", { class: "row" },
+      el("span", { text: `동시 ${p.level}` }),
+      el("div", { class: "bar " + state2 }, el("span", { style: `width:${n ? (finished / n) * 100 : 0}%` })),
+      el("span", { class: "num", text: `${finished}/${n}${errs ? ` · 오류 ${errs}` : ""}` }));
+  }));
+  const parts = [progress];
+  if (levels.length) {
+    const best = levels.reduce((a, b) => (b.tok_per_sec > a.tok_per_sec ? b : a), levels[0]);
+    const recLv = levels.find((l) => l.level === recommend);
+    const tile = (label, value, cls) => el("div", { class: "tile" }, el("small", { text: label }), el("b", { class: cls || null, text: value }));
+    if (done || recommend) {
+      parts.push(el("div", { class: "tiles" },
+        tile("권장 동시 수", recommend ? String(recommend) : "판단 불가", "accent"),
+        tile("최대 처리량", `${best.tok_per_sec.toFixed(1)} tok/s (동시 ${best.level})`),
+        tile("권장 수준 p95 지연", recLv ? ms(recLv.lat_p95_ms) : "-"),
+        tile("오류", `${levels.reduce((a, l) => a + l.errors, 0)}건`, levels.some((l) => l.errors) ? "fail" : "pass")));
+    }
+    const data = (key) => levels.map((l) => ({ x: l.level, value: l[key], errors: l.errors, highlight: done && l.level === recommend }));
+    parts.push(el("div", { class: "charts" },
+      barChart({ title: "출력 처리량", sub: "서버 전체가 1초에 내보낸 출력 토큰 (높을수록 좋음)", unit: "tok/s", data: data("tok_per_sec"), fmt: (v) => v >= 100 ? v.toFixed(0) : v.toFixed(1) }),
+      barChart({ title: "p95 지연", sub: "요청 95%가 이 시간 안에 끝남 (낮을수록 좋음)", unit: "", data: data("lat_p95_ms"), fmt: ms })));
+    const rows = levels.map((l) => el("tr", {},
+      el("td", { class: "num", text: String(l.level) }), el("td", { class: "num", text: String(l.requests) }),
+      el("td", {}, l.errors
+        ? el("span", { class: "chip fail" }, icon("x-circle"), `오류 ${l.errors}`)
+        : el("span", { class: "chip pass" }, icon("check-circle"), `성공 ${l.ok}`)),
+      el("td", { class: "num", text: l.rps.toFixed(2) }), el("td", { class: "num", text: l.tok_per_sec.toFixed(1) }),
+      el("td", { class: "num", text: l.req_tok_per_s.toFixed(1) }), el("td", { class: "num", text: ms(l.lat_p50_ms) }),
+      el("td", { class: "num", text: ms(l.lat_p95_ms) }), el("td", { class: "num", text: ms(l.lat_max_ms) }),
+      el("td", { class: "num", text: ms(l.ttft_p50_ms) }), el("td", { class: "num", text: ms(l.ttft_p95_ms) }),
+      el("td", { class: "wrap", text: l.first_error || "" })));
+    parts.push(el("div", { class: "section-title" }, icon("chart-bar"), "수준별 결과"),
+      table([["동시", "num"], ["요청", "num"], ["결과"], ["req/s", "num"], ["tok/s", "num"], ["요청당 tok/s", "num"], ["p50", "num"], ["p95", "num"], ["max", "num"], ["TTFT p50", "num"], ["TTFT p95", "num"], ["첫 오류"]], rows));
+    if (done) parts.push(el("p", { class: "path", text: "권장 동시 수: 오류 없이 처리량이 앞 수준보다 10% 이상 늘어난 마지막 수준. 그 뒤로는 처리량이 거의 안 늘고 지연만 길어집니다." }));
+  }
+  body.replaceChildren(...parts);
+}
+
+let benchAbort = null;
+$("#benchForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  if (benchAbort) return;
+  const f = e.target.elements;
+  const v = formValues();
+  const levelsText = f.levels.value;
+  const requests = Number(f.requests.value || 0);
+  const plan = levelsText.split(",").map((s) => Number(s.trim())).filter((n) => n > 0)
+    .map((level) => ({ level, requests: Math.max(requests || level * 2, level) }));
+  const state = { plan, levels: [], live: {}, recommend: 0, done: false };
+  renderBench(state);
+  benchAbort = new AbortController();
+  $("#benchRun").hidden = true;
+  $("#benchStop").hidden = false;
+  setStatus("busy");
+  try {
+    const res = await fetch("/api/bench", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        base_url: v.base_url, api_key: v.api_key, preset: v.preset, model: v.model, server: v.server,
+        temperature: v.temperature, reasoning_effort: v.reasoning_effort, system: v.system,
+        max_tokens: Number(f.max_tokens.value || 256), think: $("input[name=benchThink]:checked").value,
+        levels: levelsText, requests, prompt: f.prompt.value,
+      }),
+      signal: benchAbort.signal,
+    });
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `HTTP ${res.status}`);
+    const reader = res.body.getReader();
+    const dec = new TextDecoder();
+    let buf = "";
+    let last = 0;
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let i;
+      while ((i = buf.indexOf("\n\n")) >= 0) {
+        const block = buf.slice(0, i);
+        buf = buf.slice(i + 2);
+        const event = (/^event: (.*)$/m.exec(block) || [])[1];
+        const data = JSON.parse((/^data: (.*)$/m.exec(block) || [])[1] || "null");
+        if (event === "sample") {
+          const c = (state.live[data.level] ||= { done: 0, errors: 0 });
+          c.done++;
+          if (!data.ok) c.errors++;
+        } else if (event === "level") state.levels.push(data);
+        else if (event === "done") { state.recommend = data.recommend; state.done = true; }
+        else if (event === "error") throw new Error(data);
+        // 진행 표시는 0.2초에 한 번만 다시 그린다
+        if (event !== "sample" || Date.now() - last > 200) { renderBench(state); last = Date.now(); }
+      }
+    }
+    renderBench(state);
+    setStatus("ok");
+  } catch (err) {
+    if (err.name !== "AbortError") {
+      $("#benchBody").append(el("p", { class: "error-box", text: err.message }));
+      setStatus("err");
+    } else {
+      $("#benchBody").append(el("p", { class: "path", text: "중지했습니다. 끝난 수준까지만 기록에 남깁니다." }));
+      setStatus("ok");
+    }
+  } finally {
+    benchAbort = null;
+    $("#benchRun").hidden = false;
+    $("#benchStop").hidden = true;
+  }
+});
+$("#benchStop").addEventListener("click", () => benchAbort?.abort());
+
 // ---- 기록 탭 ----
 
 let histRecords = [];
+let priceCompare = null; // 단가 비교 결과 (탭을 다시 그려도 남긴다)
 const avg = (xs) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null);
 const fmtAvgSec = (ms) => (ms == null ? "-" : fmtSec(ms));
 const fmtNum = (n) => (n == null ? "-" : Math.round(n).toLocaleString());
@@ -750,12 +1000,29 @@ function renderHistory() {
   const pick = (x) => (!model || x.model === model) && (!source || x.source === source);
   const turns = histRecords.filter((x) => x.type === "turn" && pick(x));
   const scen = histRecords.filter((x) => x.type === "scenario" && pick(x));
+  const benches = histRecords.filter((x) => x.type === "bench" && pick(x));
   const ok = turns.filter((t) => !t.error);
+
+  // 모델별 토큰 합계 (대화·시나리오 턴 + 부하 테스트)
+  const usage = new Map();
+  const addUse = (m, pIn, pOut, n) => {
+    const u = usage.get(m) || { in: 0, out: 0, calls: 0 };
+    u.in += pIn; u.out += pOut; u.calls += n;
+    usage.set(m, u);
+  };
+  for (const t of turns) if (t.usage) addUse(t.model, t.usage.prompt_tokens, t.usage.completion_tokens, 1);
+  for (const b of benches) for (const l of b.levels) addUse(b.model, l.prompt_tokens || 0, l.completion_tokens || 0, l.ok);
+  let tokIn = 0, tokOut = 0, cost = 0, unpriced = 0;
+  for (const [m, u] of usage) {
+    tokIn += u.in; tokOut += u.out;
+    const c = costOf(m, u.in, u.out);
+    if (c == null) unpriced += u.in + u.out; else cost += c;
+  }
   const checks = scen.reduce((a, s) => a + s.checks, 0);
   const passed = scen.reduce((a, s) => a + s.checks - s.fails, 0);
   const tile = (label, value, cls) => el("div", { class: "tile" }, el("small", { text: label }), el("b", { class: cls || null, text: value }));
   const body = $("#histBody");
-  if (!turns.length && !scen.length) {
+  if (!turns.length && !scen.length && !benches.length) {
     body.replaceChildren(el("div", { class: "dtable-wrap" }, el("p", { class: "empty-note", text: "이 기간에 기록이 없습니다. 대화나 시나리오를 실행하면 쌓입니다." })));
     return;
   }
@@ -764,7 +1031,99 @@ function renderHistory() {
     tile("LLM 호출", `${turns.length.toLocaleString()}회${turns.length - ok.length ? ` · 오류 ${turns.length - ok.length}` : ""}`),
     tile("시나리오 실행", `${scen.length.toLocaleString()}회`),
     tile("검사 통과율", checks ? `${Math.round((passed / checks) * 100)}%` : "-", checks ? (passed === checks ? "pass" : "fail") : ""),
-    tile("평균 TTFT", fmtAvgSec(avg(ok.filter((t) => t.ttft_ms).map((t) => t.ttft_ms)))));
+    tile("평균 TTFT", fmtAvgSec(avg(ok.filter((t) => t.ttft_ms).map((t) => t.ttft_ms)))),
+    tile("토큰 (입력 → 출력)", `${fmtNum(tokIn)} → ${fmtNum(tokOut)}`),
+    tile("환산 비용", usage.size && unpriced < tokIn + tokOut ? usd(cost) + (unpriced ? " + 단가 미설정" : "") : "단가 미설정", "accent"));
+
+  // 공개 단가 카탈로그(OpenRouter, OrcaRouter)로 비교하고, 고른 쪽을 기준 단가로 적용한다 (인터넷 필요).
+  const models = [...new Set([...usage.keys(), ...presets.map((p) => p.model), settingsForm.elements.model.value.trim()].filter(Boolean))];
+  const orNote = el("p", { class: "path or-note", hidden: true });
+  const showErr = (e) => {
+    orNote.hidden = false;
+    orNote.className = "error-box or-note";
+    orNote.textContent = e.message + " — 폐쇄망이면 인터넷 되는 PC 에서 채운 .env.toml 의 [price] 섹션을 옮기세요.";
+  };
+  const cmpBtn = el("button", { type: "button", class: "btn ghost", title: "OpenRouter 와 OrcaRouter 의 공개 단가를 가져와 모델별로 비교합니다 (저장하지 않음)" }, icon("chart-bar"), "단가 비교");
+  cmpBtn.addEventListener("click", async () => {
+    cmpBtn.disabled = true;
+    try {
+      priceCompare = await api("/api/prices/compare", { models });
+      renderHistory();
+    } catch (e) { showErr(e); cmpBtn.disabled = false; }
+  });
+  const fillBtn = (source, label) => {
+    const b = el("button", { type: "button", class: "btn ghost", title: `${label} 공개 단가로 기준 단가를 저장합니다` }, icon("floppy-disk"), `${label} 로 적용`);
+    b.addEventListener("click", async () => {
+      b.disabled = true;
+      try {
+        const r = await api("/api/prices/fill", { source, models });
+        prices = r.prices;
+        renderHistory();
+        const done = Object.entries(r.matched).map(([m, o]) => `${m} → ${o.id} ($${o.input} / $${o.output})`);
+        const note = $("#histBody .or-note");
+        note.hidden = false;
+        note.textContent = `${label} 모델 ${r.fetched}개에서 맞춤: ${done.join(", ") || "없음"}${r.unmatched.length ? ` · 못 찾음: ${r.unmatched.join(", ")}` : ""}`;
+      } catch (e) { showErr(e); b.disabled = false; }
+    });
+    return b;
+  };
+  const orBtn = el("span", { class: "btn-row" }, cmpBtn, fillBtn("orcarouter", "OrcaRouter"), fillBtn("openrouter", "OpenRouter"));
+
+  // 단가 비교 표: 모델마다 두 곳의 단가와 지금까지 쓴 토큰의 환산 비용, 더 싼 곳
+  let compareView = null;
+  if (priceCompare) {
+    const srcs = ["openrouter", "orcarouter"];
+    const total = { openrouter: 0, orcarouter: 0 };
+    const rows = models.map((m) => {
+      const u = usage.get(m) || { in: 0, out: 0 };
+      const row = priceCompare.matches[m] || {};
+      const costs = {};
+      const cells = srcs.flatMap((src) => {
+        const o = row[src];
+        if (!o) return [el("td", { class: "muted-note", text: "없음" }), el("td", { class: "num", text: "-" })];
+        costs[src] = (u.in / 1e6) * o.input + (u.out / 1e6) * o.output;
+        total[src] += costs[src];
+        return [el("td", {}, el("div", { class: "num-l", text: `$${o.input} / $${o.output}` }), el("small", { class: "muted-note", text: o.id })),
+          el("td", { class: "num", text: usd(costs[src]) })];
+      });
+      let cheaper = "-";
+      if (costs.openrouter != null && costs.orcarouter != null && (u.in || u.out)) {
+        const d = costs.openrouter - costs.orcarouter;
+        cheaper = Math.abs(d) < 1e-9 ? "같음" : d > 0 ? `OrcaRouter (${usd(Math.abs(d))} 쌈)` : `OpenRouter (${usd(Math.abs(d))} 쌈)`;
+      }
+      return el("tr", {}, el("td", { text: m }), el("td", { class: "num", text: `${fmtNum(u.in)} → ${fmtNum(u.out)}` }), ...cells, el("td", { text: cheaper }));
+    });
+    rows.push(el("tr", { class: "total-row" }, el("td", { text: "합계" }), el("td"), el("td"), el("td", { class: "num", text: usd(total.openrouter) }), el("td"), el("td", { class: "num", text: usd(total.orcarouter) }), el("td")));
+    const info = srcs.map((src) => { const i = priceCompare.sources[src] || {}; return `${i.label} ${i.error ? "오류: " + i.error : `${i.fetched}개`}`; }).join(" · ");
+    compareView = [
+      el("div", { class: "section-title" }, icon("chart-bar"), "단가 비교 (100만 토큰당 입력 / 출력 USD, 지금까지 쓴 토큰 기준)"),
+      table([["모델"], ["토큰 (입력 → 출력)", "num"], ["OpenRouter 단가"], ["OpenRouter 비용", "num"], ["OrcaRouter 단가"], ["OrcaRouter 비용", "num"], ["더 싼 곳"]], rows),
+      el("p", { class: "path", text: `목록: ${info}. 단가는 각 서비스의 공개 목록 값이며 바뀔 수 있습니다.` }),
+    ];
+  }
+
+  // 모델별 토큰·비용과 단가 입력 (단가는 저장 버튼으로 .env.toml 에 남는다)
+  const priceRows = [...usage.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([m, u]) => {
+    const p = prices[m] || { input: 0, output: 0 };
+    const inp = el("input", { type: "number", min: "0", step: "0.01", value: p.input || "", placeholder: "0", "aria-label": `${m} 입력 단가` });
+    const outp = el("input", { type: "number", min: "0", step: "0.01", value: p.output || "", placeholder: "0", "aria-label": `${m} 출력 단가` });
+    const c = costOf(m, u.in, u.out);
+    const save = el("button", { type: "button", class: "code-btn", title: "단가 저장" }, icon("floppy-disk"), "저장");
+    save.addEventListener("click", async () => {
+      try {
+        // 손으로 고치면 출처는 "직접 입력"이 된다
+        prices = await api("/api/prices", { model: m, input: Number(inp.value || 0), output: Number(outp.value || 0) });
+        renderHistory();
+      } catch (e) { flash(save, false, "실패"); }
+    });
+    const src = p.source ? p.source.replace(/^openrouter:/, "OpenRouter · ").replace(/^orcarouter:/, "OrcaRouter · ") : "직접 입력";
+    return el("tr", {},
+      el("td", {}, el("div", { text: m }), p.input || p.output ? el("small", { class: "muted-note", text: src }) : null),
+      el("td", { class: "num", text: u.calls.toLocaleString() }),
+      el("td", { class: "num", text: fmtNum(u.in) }), el("td", { class: "num", text: fmtNum(u.out) }),
+      el("td", { class: "price-cell" }, el("span", { text: "$" }), inp), el("td", { class: "price-cell" }, el("span", { text: "$" }), outp),
+      el("td", { class: "num", text: c == null ? "단가 미설정" : usd(c) }), el("td", {}, save));
+  });
 
   // 모델·thinking 별 호출 비교
   const groups = new Map();
@@ -840,6 +1199,11 @@ function renderHistory() {
   body.replaceChildren(tiles,
     el("div", { class: "section-title" }, icon("chart-bar"), "모델 · thinking 별 호출 비교"),
     table([["모델"], ["thinking"], ["호출", "num"], ["평균 소요", "num"], ["평균 TTFT", "num"], ["평균 completion tok", "num"], ["평균 추론자", "num"], ["오류", "num"]], cmpRows),
+    el("div", { class: "section-title" }, icon("cube"), "모델별 토큰 · 환산 비용 (단가는 100만 토큰당 USD, 부하 테스트 포함)", el("span", { class: "spacer" }), orBtn),
+    orNote,
+    table([["모델"], ["호출", "num"], ["입력 tok", "num"], ["출력 tok", "num"], ["입력 단가"], ["출력 단가"], ["환산 비용", "num"], [""]], priceRows),
+    el("p", { class: "path", text: "온프렘 모델은 실제 청구액이 없습니다. 비교할 상용 API 의 단가를 넣으면 그 단가로 환산합니다. 추론 토큰은 출력에 들어갑니다." }),
+    ...(compareView || []),
     el("div", { class: "section-title" }, icon("list-checks"), "시나리오 통과율"),
     scRows.length ? table([["모델"], ["thinking"], ["실행", "num"], ["검사 통과율"], ["턴 평균", "num"]], scRows)
       : el("div", { class: "dtable-wrap" }, el("p", { class: "empty-note", text: "시나리오 기록이 없습니다." })),
@@ -927,7 +1291,7 @@ function showTab(name) {
   store("tab", name);
 }
 for (const b of $$(".tabs button")) b.addEventListener("click", () => showTab(b.dataset.tab));
-showTab(["scenario", "history", "logs"].includes(store("tab")) ? store("tab") : "chat");
+showTab(["scenario", "bench", "history", "logs"].includes(store("tab")) ? store("tab") : "chat");
 
 renderEmpty();
 pollLogs();
