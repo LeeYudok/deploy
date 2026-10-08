@@ -127,7 +127,11 @@ type Turn struct {
 	User   string   `json:"user"`
 	Think  string   `json:"think,omitempty"`  // 이 턴만 thinking 변경
 	Expect []string `json:"expect,omitempty"` // 답변에 모두 들어 있어야 함. "a|b" 는 둘 중 하나
+	Reject []string `json:"reject,omitempty"` // 답변 코드에 있으면 안 됨. 코드 펜스가 있으면 펜스 안만 본다
 }
+
+// checked 는 이 턴에 검사가 있는지다.
+func (t Turn) checked() bool { return len(t.Expect) > 0 || len(t.Reject) > 0 }
 
 // configKeys 는 .env.toml [llm] 섹션에 저장하는 키 순서다.
 var configKeys = []string{"base_url", "model", "api_key", "server", "think", "reasoning_effort", "temperature", "max_tokens", "system"}
@@ -624,6 +628,41 @@ func checkExpect(answer string, expect []string) (missing []string) {
 		}
 	}
 	return missing
+}
+
+// checkReject 는 답변 코드에 금지 문자열이 있는지 본다 (대소문자 무시, "a|b" 는 둘 중 하나라도 있으면).
+// 코드 펜스(```)가 있으면 펜스 안만 본다. 설명문에 "console.log 를 지웠다" 고 쓴 것은 걸리지 않게 하려는 것이다.
+func checkReject(answer string, reject []string) (found []string) {
+	low := strings.ToLower(codeText(answer))
+	for _, e := range reject {
+		for _, alt := range strings.Split(e, "|") {
+			if a := strings.ToLower(strings.TrimSpace(alt)); a != "" && strings.Contains(low, a) {
+				found = append(found, e)
+				break
+			}
+		}
+	}
+	return found
+}
+
+// codeText 는 답변의 코드 펜스 안 줄만 이어 붙인다. 펜스가 없으면 답변 전체다. 닫히지 않은 펜스는 끝까지 코드로 본다.
+func codeText(answer string) string {
+	var b strings.Builder
+	in, fenced := false, false
+	for _, line := range strings.Split(answer, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "```") {
+			in, fenced = !in, true
+			continue
+		}
+		if in {
+			b.WriteString(line)
+			b.WriteByte('\n')
+		}
+	}
+	if !fenced {
+		return answer
+	}
+	return b.String()
 }
 
 // scenarioFiles 는 쉼표로 구분한 파일/폴더 목록을 JSON 파일 목록으로 펼친다.

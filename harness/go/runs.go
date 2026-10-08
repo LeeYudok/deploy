@@ -54,6 +54,8 @@ type CheckResult struct {
 	Turn    int      `json:"turn"`
 	Expect  []string `json:"expect"`
 	Missing []string `json:"missing,omitempty"`
+	Reject  []string `json:"reject,omitempty"`
+	Found   []string `json:"found,omitempty"` // 답변 코드에 있던 금지 문자열
 }
 
 // ScenarioRecord 는 시나리오 한 번 실행의 요약이다.

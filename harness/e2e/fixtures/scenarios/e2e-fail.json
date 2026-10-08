@@ -3,6 +3,6 @@
   "system": "E2E",
   "turns": [
     {"user": "ping", "expect": ["pong"]},
-    {"user": "ping", "expect": ["이 문자열은 나오지 않는다"]}
+    {"user": "ping", "expect": ["이 문자열은 나오지 않는다"], "reject": ["pong"]}
   ]
 }

@@ -5,6 +5,6 @@
     {"user": "ping", "expect": ["pong"]},
     {"user": "내 이름은 민수야", "think": "on"},
     {"user": "내 이름이 뭐였지?", "expect": ["민수"]},
-    {"user": "6*7", "think": "off", "expect": ["42"]}
+    {"user": "6*7", "think": "off", "expect": ["42"], "reject": ["43"]}
   ]
 }
